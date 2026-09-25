@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>NURA (Pre-20 Baseline)</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- HOME -->
+  <main class="view" id="view-home" data-view="home">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow" id="home-date"></p>
+        <h1 id="home-greeting">Assalamu Alaikum</h1>
+      </div>
+      <button class="avatar-btn" id="open-more-from-home" aria-label="Profile">
+        <span id="avatar-initial">N</span>
+      </button>
+    </header>
+
+    <p class="home-motivation" id="home-motivation">Today's small step still counts.</p>
+
+    <div class="journey-badge">
+      <span class="journey-badge-text" id="journey-badge-text">DAY 1 OF YOUR CHANGE JOURNEY</span>
+    </div>
+
+    <div class="journey-visual" aria-hidden="true">
+      <svg viewBox="0 0 300 90" class="journey-svg">
+        <path d="M0 80 Q 90 80 140 55 T 300 15" fill="none" stroke="var(--border)" stroke-width="2"/>
+        <path d="M0 80 Q 90 80 140 55 T 210 32" fill="none" stroke="var(--mint)" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="210" cy="32" r="5" fill="var(--mint)"/>
+        <circle cx="270" cy="18" r="14" fill="var(--gold-soft)" opacity="0.55"/>
+        <circle cx="270" cy="18" r="7" fill="var(--gold)"/>
+      </svg>
+    </div>
+
+    <div id="priority-card-home-slot"></div>
+
+    <section class="card priority-card" id="priority-card-el">
+      <div class="card-row">
+        <h2>Today's Priority</h2>
+      </div>
+
+      <div id="priority-content">
+        <div id="priority-checkin" class="hidden">
+          <p class="priority-checkin-text" id="priority-checkin-text"></p>
+          <div class="priority-checkin-buttons">
+            <button class="action-btn primary" id="checkin-completed-btn">Completed</button>
+            <button class="action-btn" id="checkin-partly-btn">Partly</button>
+            <button class="action-btn warn" id="checkin-notyet-btn">Not yet</button>
+          </div>
+        </div>
+
+        <div id="priority-picker" class="hidden">
+          <p class="muted-line hidden" id="priority-adjustment-note"></p>
+          <div id="priority-picker-main">
+            <p class="muted-line">Pick what matters most today, or create your own.</p>
+            <div class="preset-plan-grid" id="preset-plan-grid"></div>
+            <div class="priority-custom-row">
+              <input type="text" class="text-input" id="priority-custom-input" placeholder="Create your own goal..." maxlength="60">
+              <button class="btn btn-primary" id="priority-custom-btn">Set</button>
+            </div>
+          </div>
+          <div id="priority-picker-step" class="hidden"></div>
+        </div>
+
+        <div id="priority-active" class="hidden">
+          <p class="priority-title" id="priority-title"></p>
+          <p class="priority-why" id="priority-why"></p>
+
+          <div id="priority-view-generic">
+            <div id="priority-extra-content"></div>
+            <div id="priority-timer-wrap">
+              <div class="focus-duration-row hidden" id="focus-duration-row">
+                <button class="duration-chip" data-minutes="5">5</button>
+                <button class="duration-chip" data-minutes="10">10</button>
+                <button class="duration-chip" data-minutes="15">15</button>
+                <button class="duration-chip" data-minutes="20">20</button>
+                <button class="duration-chip" data-minutes="25">25</button>
+                <button class="duration-chip" data-minutes="30">30</button>
+                <button class="duration-chip" data-minutes="45">45</button>
+                <button class="duration-chip" data-minutes="60">60</button>
+                <input type="number" id="focus-duration-custom" class="duration-custom-input" placeholder="Custom" min="1" max="180">
+              </div>
+              <p class="focus-clock" id="focus-clock">20:00</p>
+              <div class="focus-controls">
+                <button class="btn btn-primary btn-full" id="focus-start-btn">Start Now</button>
+                <button class="btn btn-outline btn-full hidden" id="focus-pause-btn">Pause</button>
+                <button class="btn btn-outline btn-full hidden" id="focus-stop-btn">Finish</button>
+              </div>
+            </div>
+            <p class="priority-done-text hidden" id="priority-done-text">Completed today ✓</p>
+          </div>
+
+          <div id="priority-view-salah" class="hidden"></div>
+          <div id="priority-view-sleep" class="hidden"></div>
+
+          <button class="priority-change-link" id="priority-change-btn">Choose a different priority</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-row">
+        <h2>Today's Progress</h2>
+      </div>
+      <div class="progress-ring-row">
+        <div class="progress-ring-wrap">
+          <svg viewBox="0 0 80 80" class="progress-ring-svg">
+            <circle cx="40" cy="40" r="34" class="progress-ring-track"/>
+            <circle cx="40" cy="40" r="34" class="progress-ring-fill" id="progress-ring-fill"/>
+          </svg>
+          <span class="progress-ring-percent" id="progress-ring-percent">0%</span>
+        </div>
+        <p class="muted-line" id="progress-line">Not started yet.</p>
+      </div>
+      <div id="progress-graph-container"></div>
+    </section>
+  </main>
+
+  <!-- SUNNAH -->
+  <main class="view hidden" id="view-sunnah" data-view="sunnah">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow" id="sunnah-date"></p>
+        <h1>Sunnah</h1>
+      </div>
+    </header>
+
+    <div class="subtab-row" id="sunnah-subtabs">
+      <button class="subtab active" data-subtab="routine">Routine</button>
+      <button class="subtab" data-subtab="akhlaq">Akhlaq</button>
+      <button class="subtab" data-subtab="duas">Duas</button>
+      <button class="subtab" data-subtab="quran">Quran</button>
+      <button class="subtab" data-subtab="hadith">Hadith &amp; Quiz</button>
+    </div>
+
+    <div id="sunnah-panel-routine" class="sunnah-panel">
+      <section class="card">
+        <p class="muted-line">Obligatory prayers and their nearby Sunnah/remembrance, organized by time. Tap to expand a section, then mark what you did.</p>
+      </section>
+      <div id="routine-sections"></div>
+    </div>
+
+    <div id="sunnah-panel-akhlaq" class="sunnah-panel hidden">
+      <section class="card">
+        <h2>Character (Akhlaq)</h2>
+        <p class="muted-line">Practical daily character actions — not a ranking, just a personal check.</p>
+        <div class="habit-list" id="akhlaq-list"></div>
+      </section>
+    </div>
+
+    <div id="sunnah-panel-duas" class="sunnah-panel hidden">
+      <div id="duas-search-row" class="duas-search-row">
+        <input type="text" id="duas-search-input" class="text-input" placeholder="Search duas">
+        <button class="chip-toggle" id="duas-favorites-toggle" aria-pressed="false">&#9733; Favorites</button>
+      </div>
+      <div id="duas-back-row" class="duas-back-row hidden">
+        <button class="icon-btn" id="duas-back-btn">&#8592; Back</button>
+      </div>
+      <div id="duas-categories-view">
+        <div class="dua-category-grid" id="dua-category-grid"></div>
+      </div>
+      <div id="duas-list-view" class="hidden">
+        <h2 id="duas-list-title"></h2>
+        <div class="dua-list" id="dua-list"></div>
+      </div>
+      <div id="duas-detail-view" class="hidden">
+        <section class="card dua-detail-card">
+          <div class="modal-header-row">
+            <p class="hadith-source" id="dua-detail-source"></p>
+            <button class="icon-btn dua-fav-btn" id="dua-detail-fav" aria-label="Toggle favorite">&#9733;</button>
+          </div>
+          <h2 id="dua-detail-title"></h2>
+          <p class="dua-arabic" id="dua-detail-arabic" dir="rtl" lang="ar"></p>
+          <p class="dua-translit" id="dua-detail-translit"></p>
+          <p class="dua-meaning" id="dua-detail-meaning"></p>
+          <div class="dua-detail-actions">
+            <button class="btn btn-outline" id="dua-copy-btn">Copy</button>
+            <button class="btn btn-outline" id="dua-share-btn">Share</button>
+          </div>
+        </section>
+      </div>
+      <div id="duas-search-results-view" class="hidden">
+        <h2>Search results</h2>
+        <div class="dua-list" id="dua-search-results"></div>
+      </div>
+    </div>
+
+    <div id="sunnah-panel-quran" class="sunnah-panel hidden">
+      <section class="card">
+        <h2>Today's Verse</h2>
+        <div class="verse-box hidden" id="verse-box">
+          <p class="verse-ref" id="verse-ref"></p>
+          <p class="verse-arabic" id="verse-arabic" dir="rtl" lang="ar"></p>
+          <p class="verse-source">Source: Tanzil Project &middot; tanzil.net</p>
+        </div>
+      </section>
+
+      <div id="quran-surah-list-view">
+        <section class="card">
+          <h2>Read the Full Quran</h2>
+          <p class="panel-subnote">Arabic: Tanzil Project. English: Saheeh International. Urdu: Maulana Muhammad Junagarhi — both via the Quran Foundation API (api.quran.com). Translations load per surah and need an internet connection.</p>
+          <input type="text" id="quran-surah-search" class="quran-surah-search" placeholder="Search surah name...">
+        </section>
+        <div class="dua-list" id="quran-surah-list"></div>
+      </div>
+
+      <div id="quran-surah-detail-view" class="hidden">
+        <div class="duas-back-row">
+          <button class="icon-btn" id="quran-surah-back-btn">&larr; All Surahs</button>
+        </div>
+        <section class="card" id="quran-surah-header"></section>
+        <div id="quran-ayah-list"></div>
+      </div>
+    </div>
+
+    <div id="sunnah-panel-hadith" class="sunnah-panel hidden">
+      <div id="hadith-list-view">
+        <section class="card">
+          <p class="muted-line">Short, sourced lessons — tap one to read it and take the quiz.</p>
+        </section>
+        <div class="dua-list" id="hadith-list"></div>
+      </div>
+      <div id="hadith-detail-view" class="hidden">
+        <div class="duas-back-row"><button class="icon-btn" id="hadith-back-btn">&#8592; Back</button></div>
+        <section class="card" id="hadith-card">
+          <p class="hadith-source" id="hadith-source"></p>
+          <p class="hadith-arabic" id="hadith-arabic" dir="rtl" lang="ar"></p>
+          <p class="hadith-text" id="hadith-text"></p>
+          <p class="hadith-explain" id="hadith-explain"></p>
+          <div id="quiz-area"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- AI CHAT -->
+  <main class="view hidden" id="view-chat" data-view="chat">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow">AI Chat</p>
+        <h1>Bhai</h1>
+      </div>
+    </header>
+    <section class="card">
+      <p class="pending-note">Bhai reads your real NURA data on this device (today's Salah, plan, priority, progress) to suggest one realistic next step. It is rule-based, not a live AI model — nothing you type leaves this device. Not a doctor, therapist or scholar.</p>
+    </section>
+    <section class="card">
+      <h2>What's going on?</h2>
+      <div class="chat-options" id="chat-options"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" class="text-input" placeholder="Or say it in your own words..." maxlength="300" autocomplete="off">
+        <button class="btn btn-primary" id="chat-send-btn" type="button">Send</button>
+      </div>
+    </section>
+    <section class="card hidden" id="chat-response-card">
+      <div id="chat-response"></div>
+    </section>
+  </main>
+
+  <!-- DUNIYA -->
+  <main class="view hidden" id="view-duniya" data-view="duniya">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow">Everyday Self-Improvement</p>
+        <h1>Duniya</h1>
+      </div>
+    </header>
+    <p class="home-motivation">Improve one part of your life at a time.</p>
+
+    <section class="card">
+      <div class="card-row"><h2>Today</h2></div>
+      <div id="duniya-today-content"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-row"><h2>Quick Actions</h2></div>
+      <div class="preset-plan-grid" id="duniya-quick-actions"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-row"><h2>Life Areas</h2></div>
+      <div class="duniya-area-grid" id="duniya-area-grid"></div>
+    </section>
+  </main>
+
+  <!-- DUNIYA: TOOL (hosts the shared priority card, keeps Study/Phone/Sleep/Fitness inside Duniya) -->
+  <main class="view hidden" id="view-duniya-tool" data-view="duniya-tool">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-tool-back">&larr; Duniya</button></p>
+        <h1>Duniya</h1>
+      </div>
+    </header>
+    <div id="priority-card-duniya-slot"></div>
+  </main>
+
+  <!-- DUNIYA: PLAN MY DAY -->
+  <main class="view hidden" id="view-duniya-plan" data-view="duniya-plan">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-plan-back">&larr; Duniya</button></p>
+        <h1>Plan My Day</h1>
+      </div>
+    </header>
+    <div id="duniya-plan-content"></div>
+  </main>
+
+  <!-- DUNIYA: HABITS & DISCIPLINE -->
+  <main class="view hidden" id="view-duniya-habits" data-view="duniya-habits">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-habits-back">&larr; Duniya</button></p>
+        <h1>Habits &amp; Discipline</h1>
+      </div>
+    </header>
+    <p class="muted-line" style="margin-bottom:14px;">Missed yesterday? Restart today. No streaks, no shame.</p>
+    <section class="card">
+      <div class="habit-list" id="duniya-habit-list"></div>
+      <div class="add-task-row" style="margin-top:10px;">
+        <input type="text" class="text-input" id="duniya-habit-input" placeholder="e.g. Drink water" maxlength="40">
+        <button class="btn btn-primary" id="duniya-habit-add-btn">Add</button>
+      </div>
+    </section>
+    <section class="card" style="margin-top:14px;">
+      <h2>Recovery</h2>
+      <p class="muted-line" style="margin:4px 0 10px;">A private space to quit or control a habit. Stays on this device.</p>
+      <button class="btn btn-outline btn-full" id="open-recovery-btn">Open Recovery</button>
+    </section>
+  </main>
+
+  <!-- DUNIYA: RECOVERY -->
+  <main class="view hidden" id="view-duniya-recovery" data-view="duniya-recovery">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-recovery-back">&larr; Habits</button></p>
+        <h1>Recovery</h1>
+      </div>
+    </header>
+    <section class="card" id="duniya-recovery-content"></section>
+  </main>
+
+  <!-- DUNIYA: PRODUCTIVITY -->
+  <main class="view hidden" id="view-duniya-productivity" data-view="duniya-productivity">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-productivity-back">&larr; Duniya</button></p>
+        <h1>Productivity</h1>
+      </div>
+    </header>
+    <section class="card">
+      <h2>Top 3 tasks today</h2>
+      <div id="duniya-top3-list"></div>
+    </section>
+    <section class="card">
+      <h2>End-of-day review</h2>
+      <p class="muted-line">One honest note about today.</p>
+      <textarea id="duniya-eod-note" class="text-input reflection-textarea" maxlength="200" rows="3"></textarea>
+      <button class="btn btn-outline btn-full" id="duniya-eod-save-btn">Save</button>
+    </section>
+  </main>
+
+  <!-- DUNIYA: MENTAL WELLBEING -->
+  <main class="view hidden" id="view-duniya-wellbeing" data-view="duniya-wellbeing">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-wellbeing-back">&larr; Duniya</button></p>
+        <h1>Mental Wellbeing</h1>
+      </div>
+    </header>
+    <p class="pending-note" style="margin-bottom:14px;">NURA offers grounding support, not medical or mental-health diagnosis. If things feel serious or ongoing, please reach out to a real professional.</p>
+    <div class="chat-options" id="duniya-wellbeing-options"></div>
+    <section class="card hidden" id="duniya-wellbeing-response-card">
+      <div id="duniya-wellbeing-response"></div>
+    </section>
+  </main>
+
+  <!-- DUNIYA: CAREER & SKILLS -->
+  <main class="view hidden" id="view-duniya-career" data-view="duniya-career">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-career-back">&larr; Duniya</button></p>
+        <h1>Career &amp; Skills</h1>
+      </div>
+    </header>
+    <section class="card" id="duniya-career-content"></section>
+  </main>
+
+  <!-- DUNIYA: MONEY HABITS -->
+  <main class="view hidden" id="view-duniya-money" data-view="duniya-money">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-money-back">&larr; Duniya</button></p>
+        <h1>Money Habits</h1>
+      </div>
+    </header>
+    <section class="card" id="duniya-money-content"></section>
+  </main>
+
+  <!-- DUNIYA: PHONE CONTROL → INTENTIONAL OPEN -->
+  <main class="view hidden" id="view-duniya-phone-guard" data-view="duniya-phone-guard">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-phone-guard-back">&larr; Phone Control</button></p>
+        <h1>Intentional Open</h1>
+      </div>
+    </header>
+    <section class="card" id="duniya-phone-guard-content"></section>
+  </main>
+
+  <!-- DUNIYA: PERSONAL GROWTH -->
+  <main class="view hidden" id="view-duniya-growth" data-view="duniya-growth">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="duniya-growth-back">&larr; Duniya</button></p>
+        <h1>Personal Growth</h1>
+      </div>
+    </header>
+    <section class="card" id="duniya-growth-content"></section>
+  </main>
+
+  <!-- VAULT -->
+  <main class="view hidden" id="view-vault" data-view="vault">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow">Vault</p>
+        <h1>Hamdard</h1>
+      </div>
+    </header>
+
+    <!-- SETUP: no passphrase yet -->
+    <div id="vault-setup" class="vault-screen hidden">
+      <section class="card">
+        <p class="muted-line">Your Vault is a private space on this device for reflection, struggle notes, a career audit, and your personal principles. Set a passphrase to protect it — nothing here is ever sent anywhere.</p>
+      </section>
+      <section class="card">
+        <h2>Create a Vault passphrase</h2>
+        <input type="password" id="vault-setup-pass" class="text-input" placeholder="Choose a passphrase" autocomplete="new-password">
+        <input type="password" id="vault-setup-confirm" class="text-input" placeholder="Confirm passphrase" autocomplete="new-password">
+        <p class="quiz-feedback hidden" id="vault-setup-error"></p>
+        <p class="pending-note">If you lose this passphrase, your entries cannot be recovered — there is no reset. Clearing your browser or app storage will also permanently delete everything here.</p>
+        <button class="btn btn-primary btn-full" id="vault-setup-create">Create Vault</button>
+      </section>
+    </div>
+
+    <!-- LOCKED -->
+    <div id="vault-locked" class="vault-screen hidden">
+      <section class="card">
+        <h2>Vault is locked</h2>
+        <p class="muted-line">Enter your passphrase to unlock.</p>
+        <input type="password" id="vault-unlock-pass" class="text-input" placeholder="Passphrase" autocomplete="current-password">
+        <p class="quiz-feedback hidden" id="vault-unlock-error"></p>
+        <button class="btn btn-primary btn-full" id="vault-unlock-btn">Unlock</button>
+        <button class="btn btn-outline btn-full" id="vault-forgot-btn">Forgot passphrase?</button>
+      </section>
+    </div>
+
+    <!-- FORGOT PASSPHRASE -->
+    <div id="vault-forgot" class="vault-screen hidden">
+      <section class="card">
+        <h2>Forgot your passphrase?</h2>
+        <p class="pending-note">There is no way to recover a lost Vault passphrase — it is never stored anywhere, even by this app. The only option is to permanently erase this Vault and start a new one. Everything currently inside it will be lost.</p>
+        <button class="btn btn-outline btn-full btn-danger" id="vault-forgot-erase-btn">Erase this Vault and start over</button>
+        <button class="btn btn-outline btn-full" id="vault-forgot-back-btn">Go back</button>
+      </section>
+    </div>
+
+    <!-- HOME (unlocked) -->
+    <div id="vault-home" class="vault-screen hidden">
+      <section class="card">
+        <div class="card-row"><h2>Your Private Space</h2><button class="icon-btn" id="vault-lock-btn">Lock</button></div>
+        <input type="text" id="vault-search-input" class="text-input" placeholder="Search your entries">
+      </section>
+      <div id="vault-search-results-wrap" class="hidden">
+        <div class="dua-list" id="vault-search-results"></div>
+      </div>
+      <div id="vault-section-grid-wrap">
+        <div class="dua-category-grid" id="vault-section-grid"></div>
+      </div>
+      <button class="btn btn-outline btn-full" id="vault-settings-open-btn">Vault settings</button>
+    </div>
+
+    <!-- SECTION LIST -->
+    <div id="vault-section-view" class="vault-screen hidden">
+      <div class="duas-back-row"><button class="icon-btn" id="vault-section-back">&#8592; Back</button></div>
+      <div class="card-row"><h2 id="vault-section-title"></h2><button class="btn btn-primary" id="vault-new-entry-btn">+ New</button></div>
+      <div class="dua-list" id="vault-entry-list"></div>
+    </div>
+
+    <!-- ENTRY FORM -->
+    <div id="vault-entry-form" class="vault-screen hidden">
+      <div class="duas-back-row"><button class="icon-btn" id="vault-form-back">&#8592; Cancel</button></div>
+      <section class="card">
+        <input type="text" id="vault-entry-title-input" class="text-input" placeholder="Title (optional)">
+        <textarea id="vault-entry-body-input" class="text-input vault-textarea" placeholder="Write freely — this is private." rows="10"></textarea>
+        <button class="btn btn-primary btn-full" id="vault-entry-save-btn">Save entry</button>
+      </section>
+    </div>
+
+    <!-- ENTRY DETAIL -->
+    <div id="vault-entry-detail" class="vault-screen hidden">
+      <div class="duas-back-row"><button class="icon-btn" id="vault-detail-back">&#8592; Back</button></div>
+      <section class="card">
+        <p class="hadith-source" id="vault-detail-date"></p>
+        <h2 id="vault-detail-title"></h2>
+        <p class="dua-meaning vault-body-text" id="vault-detail-body"></p>
+        <div class="dua-detail-actions">
+          <button class="btn btn-outline" id="vault-detail-edit">Edit</button>
+          <button class="btn btn-outline btn-danger" id="vault-detail-delete">Delete</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="vault-settings-view" class="vault-screen hidden">
+      <div class="duas-back-row"><button class="icon-btn" id="vault-settings-back">&#8592; Back</button></div>
+      <section class="card">
+        <h2>Change passphrase</h2>
+        <input type="password" id="vault-change-current" class="text-input" placeholder="Current passphrase">
+        <input type="password" id="vault-change-new" class="text-input" placeholder="New passphrase">
+        <input type="password" id="vault-change-confirm" class="text-input" placeholder="Confirm new passphrase">
+        <p class="quiz-feedback hidden" id="vault-change-error"></p>
+        <button class="btn btn-primary btn-full" id="vault-change-btn">Change passphrase</button>
+      </section>
+      <section class="card">
+        <h2>Clear Vault</h2>
+        <p class="pending-note">This permanently deletes your passphrase and every entry on this device. This cannot be undone.</p>
+        <button class="btn btn-outline btn-full btn-danger" id="vault-clear-btn">Clear Vault permanently</button>
+      </section>
+      <section class="card">
+        <h2>Encryption</h2>
+        <p class="muted-line">Entries are encrypted with AES-GCM (256-bit) using the browser's built-in Web Crypto API. The key is derived from your passphrase with PBKDF2 (150,000 iterations) and is never stored — only held in memory while unlocked, and only on this device. This has not been independently security-audited.</p>
+      </section>
+    </div>
+  </main>
+
+  <!-- MORE -->
+  <main class="view hidden" id="view-more" data-view="more">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow">More</p>
+        <h1>Profile &amp; Settings</h1>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Profile</h2>
+      <p class="muted-line" id="more-name-display"></p>
+      <button class="btn btn-outline btn-full" id="edit-name-btn">Change name</button>
+    </section>
+
+    <section class="card">
+      <h2>Hamdard</h2>
+      <p class="muted-line">Your private, encrypted reflection space.</p>
+      <button class="btn btn-outline btn-full" id="open-hamdard-btn">Open Hamdard</button>
+    </section>
+
+    <section class="card">
+      <h2>What NURA Knows About Me</h2>
+      <p class="muted-line" style="margin:4px 0 10px;">Routines and patterns NURA has learned from your activity. Review, correct or forget them.</p>
+      <button class="btn btn-outline btn-full" id="open-memory-btn">Open</button>
+    </section>
+
+    <section class="card">
+      <h2>Today's Coins</h2>
+      <p class="coins-line"><span id="coins-count">0</span> learning coins</p>
+      <p class="pending-note">Redemption, monetary value, and partnerships are undecided — these are a learning tracker only, not currency.</p>
+    </section>
+
+    <section class="card">
+      <h2>Your Data</h2>
+      <button class="btn btn-outline btn-full" id="export-data-btn">Export my data (JSON)</button>
+      <button class="btn btn-outline btn-full btn-danger" id="clear-data-btn">Delete all my data</button>
+    </section>
+
+    <section class="card">
+      <h2>Feature Status</h2>
+      <ul class="status-list" id="feature-status-list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>About this build</h2>
+      <p class="muted-line">NURA — Pre-20 September baseline. Restored from the project as it stood on 19 Sep 2026 (commit a6e47e0), with one addition: Bhai now reads your real NURA data to suggest a next step. It keeps its own data on this device, separate from the current NURA app.</p>
+    </section>
+  </main>
+
+  <!-- MEMORY: WHAT NURA KNOWS ABOUT ME -->
+  <main class="view hidden" id="view-memory" data-view="memory">
+    <header class="top-header">
+      <div>
+        <p class="eyebrow"><button class="icon-btn" id="memory-back">&larr; More</button></p>
+        <h1>What NURA Knows About Me</h1>
+      </div>
+    </header>
+    <section class="card" id="memory-content"></section>
+  </main>
+
+  <!-- BOTTOM NAV -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-nav="home" aria-label="Home">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"/></svg>
+      <span>Home</span>
+    </button>
+    <button class="nav-btn" data-nav="sunnah" aria-label="Sunnah">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 4h14v16l-7-4-7 4z"/></svg>
+      <span>Sunnah</span>
+    </button>
+    <button class="nav-btn" data-nav="chat" aria-label="AI Chat">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h16v12H7l-3 3z"/></svg>
+      <span>AI Chat</span>
+    </button>
+    <button class="nav-btn" data-nav="duniya" aria-label="Duniya">
+      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18a13 13 0 0 1 0-18z"/></svg>
+      <span>Duniya</span>
+    </button>
+    <button class="nav-btn" data-nav="more" aria-label="More">
+      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+      <span>More</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- NAME MODAL -->
+<div class="modal-overlay hidden" id="modal-name">
+  <div class="modal-sheet">
+    <h2>Welcome to NURA</h2>
+    <p class="modal-sub">What should we call you?</p>
+    <input type="text" id="name-input" class="text-input" placeholder="Your name" maxlength="30">
+    <button class="btn btn-primary btn-full" id="name-save">Continue</button>
+  </div>
+</div>
+
+<!-- FOCUS HONEST-COMPLETION MODAL -->
+<div class="modal-overlay hidden" id="modal-focus-check">
+  <div class="modal-sheet">
+    <h2>Session ended</h2>
+    <p class="modal-sub" id="focus-check-text">Did you actually finish the task, or just the timer?</p>
+    <button class="btn btn-primary btn-full" id="focus-check-done">Yes, I finished it</button>
+    <button class="btn btn-outline btn-full" id="focus-check-notdone">No, still working on it</button>
+  </div>
+</div>
+
+<!-- PROGRESS DETAILS MODAL -->
+<div class="modal-overlay hidden" id="modal-progress-details">
+  <div class="modal-sheet">
+    <div class="modal-header-row">
+      <h2>Progress Details</h2>
+      <button class="icon-btn" id="progress-details-close" aria-label="Close">&#10005;</button>
+    </div>
+    <p class="modal-sub">Today</p>
+    <div id="progress-details-today"></div>
+    <p class="modal-sub" style="margin-top:16px;">Last 7 days</p>
+    <div id="progress-details-week"></div>
+  </div>
+</div>
+
+<!-- SHIELD MODAL -->
+<div class="modal-overlay hidden" id="modal-shield">
+  <div class="modal-sheet">
+    <div class="modal-header-row">
+      <h2>Shield</h2>
+      <button class="icon-btn" id="shield-close" aria-label="Close">&#10005;</button>
+    </div>
+    <p class="pending-note">Prototype: a manual pause you choose to start. This does not detect, block, or monitor anything on your phone.</p>
+    <div id="shield-step-start">
+      <p class="modal-sub">Take 30 seconds before you decide.</p>
+      <p class="shield-clock" id="shield-clock">0:30</p>
+      <button class="btn btn-primary btn-full" id="shield-begin-btn">Start the pause</button>
+    </div>
+    <div id="shield-step-reason" class="hidden">
+      <p class="modal-sub">What's one reason this matters to you right now?</p>
+      <input type="text" id="shield-reason-input" class="text-input" placeholder="Write a short reason" maxlength="80">
+      <p class="modal-sub">A small grounding step:</p>
+      <p class="shield-grounding">Take three slow breaths. Unclench your jaw and shoulders. Notice one thing you can see, hear, and feel right now.</p>
+      <button class="btn btn-primary btn-full" id="shield-done-btn">I'm okay, close this</button>
+      <button class="btn btn-outline btn-full" id="shield-goal-btn">Take me to today's priority</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIMPLE TOAST -->
+<div class="toast hidden" id="toast"></div>
+
+<script src="js/duas-data.js"></script>
+<script src="js/ruku-data.js"></script>
+<script src="js/quran-meta.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

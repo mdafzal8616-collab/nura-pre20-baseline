@@ -1,0 +1,9 @@
+serve.ps1
+node_modules/
+.DS_Store
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
