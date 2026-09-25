@@ -14,3 +14,14 @@ A **separate, historical build** of NURA for side-by-side comparison with the cu
 5. Page title, an "About this build" card in More, and the Feature Status line for Bhai.
 
 Everything else — Home, Salah, Study, Fitness, Sleep, Plan My Day, Recovery, Money, Sunnah/Quran/Hadith, Vault ("Hamdard" in this era is the private reflection space; the chat companion is "Bhai") — is the original code.
+
+## Home rebuild — 2026-09-25
+
+Only the Home screen was rebuilt (Sunnah, Duniya, AI Chat and More are unchanged; the bottom navigation order is unchanged). The previous deployment is preserved as the git tag `frozen-comparison-v1`.
+
+- **Right Now hero:** the current Salah (large), with a "Mark as prayed" action, then the next Salah as a lighter strip with a live countdown. Uses the app's existing prayer settings and cached times; unmarked earlier prayers appear as small chips. Setup, loading and failure states are handled inside the hero.
+- **Hamdard note:** appears only when the data supports a real suggestion (free time before the next Salah, a pending priority, most of the day done). One button at most.
+- **Today's Priority:** the same data and logic as before (one priority per day, timer, check-in), presented as an actionable card with an inviting empty state; the choices are tiles with a description.
+- **Today's Progress:** completed / applicable actions — prayers whose time has arrived, today's priority, Plan My Day items, habits and Top 3 — with a per-group breakdown. The old 7-day graph was removed from Home; the report sheet is one tap away.
+- **Useful right now:** 3–4 tiles chosen by time of day and current state.
+- No new storage keys; existing saved data (name, prayer settings, priority, plan, habits) is read as before.

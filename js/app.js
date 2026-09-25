@@ -101,25 +101,6 @@
     return out;
   }
 
-  // ---------- MOTIVATIONAL LINE ----------
-  // One line, stable for the whole day (picked deterministically from the
-  // date), not re-randomized on every render.
-
-  var MOTIVATION_LINES = [
-    "Today's small step still counts.",
-    "Progress starts with what you do next.",
-    "One focused action can change your day.",
-    "Improve a little. Repeat it tomorrow.",
-    "You don't need a perfect day, just one honest step."
-  ];
-
-  function getTodaysMotivationLine() {
-    var key = todayKey();
-    var seed = 0;
-    for (var i = 0; i < key.length; i++) seed += key.charCodeAt(i);
-    return MOTIVATION_LINES[seed % MOTIVATION_LINES.length];
-  }
-
   // ---------- PRAYER TIMES ----------
   // Powers the Salah Consistency priority. Times come from Aladhan
   // (api.aladhan.com), a free, keyless, widely-used prayer-times API —
@@ -377,6 +358,7 @@
     }
     focusState.linkedPriorityId = null;
     pickerStep = { view: "main", bodyPart: null };
+    priorityPickerOpen = true;
     renderHome();
   }
 
@@ -388,8 +370,8 @@
     }
     focusState.linkedPriorityId = null;
     pickerStep = { view: "main", bodyPart: null };
+    priorityPickerOpen = true;
     stopFocus();
-    stopSalahCountdown();
     renderHome();
   }
 
@@ -747,13 +729,28 @@
     }
   }
 
+  var PRESET_TILES = {
+    study: ["📚", "Pick a length, then focus"],
+    sleep: ["🌙", "Set a bedtime, track your rest"],
+    phone: ["📵", "A break from a distraction"],
+    salah: ["🕌", "Stay on top of today's prayers"],
+    fitness: ["🏋️", "A short guided workout"],
+    morning: ["☀️", "Your full morning routine"]
+  };
+
   function renderPresetPicker() {
     var grid = document.getElementById("preset-plan-grid");
     grid.innerHTML = "";
     PRESET_PLANS.forEach(function (plan) {
       var btn = document.createElement("button");
-      btn.className = "preset-plan-chip";
-      btn.textContent = plan.label;
+      btn.className = "preset-plan-chip preset-tile";
+      var tile = PRESET_TILES[plan.key] || ["⭐", ""];
+      var tIcon = document.createElement("span"); tIcon.className = "pt-icon"; tIcon.textContent = tile[0];
+      var tText = document.createElement("span"); tText.className = "pt-text";
+      var tLabel = document.createElement("span"); tLabel.className = "pt-label"; tLabel.textContent = plan.label;
+      var tSub = document.createElement("span"); tSub.className = "pt-sub"; tSub.textContent = tile[1];
+      tText.appendChild(tLabel); tText.appendChild(tSub);
+      btn.appendChild(tIcon); btn.appendChild(tText);
       btn.addEventListener("click", function () {
         if (plan.key === "study") {
           pickerStep = { view: "study-prep", bodyPart: null };
@@ -816,18 +813,11 @@
     return 0;
   }
 
-  function renderProgressRing(p) {
-    var pct = computeProgressPercent(p);
-    var circumference = 213.6;
-    document.getElementById("progress-ring-fill").style.strokeDashoffset = circumference * (1 - pct / 100);
-    document.getElementById("progress-ring-percent").textContent = pct + "%";
-  }
-
   // ---------- 7-DAY PROGRESS GRAPH (real data only) ----------
 
   function getDayProgressPercent(dateKey) {
     if (dateKey === todayKey()) {
-      return computeProgressPercent(getCurrentPriority());
+      var hp = homeProgress(); return hp.total ? hp.percent : 0;
     }
     var log = readJSON("nc_priority_log", []);
     var entries = log.filter(function (e) { return e.date === dateKey; });
@@ -838,53 +828,14 @@
     return 0;
   }
 
-  function renderProgressGraph() {
-    var container = document.getElementById("progress-graph-container");
-    var anyData = readJSON("nc_priority_log", []).length > 0 || !!getCurrentPriority();
-    container.innerHTML = "";
-
-    if (!anyData) {
-      var empty = document.createElement("p");
-      empty.className = "progress-graph-empty";
-      empty.textContent = "Complete your first action to start your progress graph.";
-      container.appendChild(empty);
-      return;
-    }
-
-    var row = document.createElement("div");
-    row.className = "progress-graph-row";
-    var today = todayKey();
-    getLastNDateKeys(7).slice().reverse().forEach(function (dateKey) {
-      var pct = getDayProgressPercent(dateKey);
-      var wrap = document.createElement("div");
-      wrap.className = "progress-graph-bar-wrap";
-      var bar = document.createElement("div");
-      bar.className = "progress-graph-bar" + (pct !== null ? " has-data" : "") + (dateKey === today ? " is-today" : "");
-      bar.style.height = Math.max(4, (pct || 0) * 0.7) + "px";
-      var label = document.createElement("span");
-      label.className = "progress-graph-label";
-      label.textContent = new Date(dateKey + "T00:00:00").toLocaleDateString(undefined, { weekday: "short" }).slice(0, 3);
-      wrap.appendChild(bar);
-      wrap.appendChild(label);
-      row.appendChild(wrap);
-    });
-    row.addEventListener("click", openProgressDetails);
-    container.appendChild(row);
-
-    var hint = document.createElement("p");
-    hint.className = "progress-tap-hint";
-    hint.textContent = "Tap for details";
-    container.appendChild(hint);
-  }
-
   function openProgressDetails() {
     var todayEl = document.getElementById("progress-details-today");
     var p = getCurrentPriority();
     todayEl.innerHTML = "";
     var rows = [
-      { label: "Completed actions", value: p && p.status !== "pending" ? "1" : "0" },
-      { label: "Pending actions", value: p && p.status === "pending" ? "1" : "0" },
-      { label: "Overall progress", value: computeProgressPercent(p) + "%" }
+      { label: "Completed actions", value: String(homeProgress().done) },
+      { label: "Pending actions", value: String(homeProgress().total - homeProgress().done) },
+      { label: "Overall progress", value: homeProgress().total ? homeProgress().percent + "%" : "No actions yet" }
     ];
     rows.forEach(function (r) {
       var row = document.createElement("div");
@@ -960,138 +911,442 @@
     document.getElementById("modal-progress-details").classList.remove("hidden");
   }
 
-  function renderProgressLine(p) {
-    var line = document.getElementById("progress-line");
-    renderProgressRing(p);
-    if (!p) { line.textContent = "Choose today's priority above to begin."; return; }
-    if (p.kind === "salah") {
-      var completions = getSalahCompletions();
-      var doneCount = PRAYER_ORDER.filter(function (n) { return completions[n]; }).length;
-      line.textContent = doneCount + " of 5 prayers marked complete today.";
-      return;
-    }
-    if (p.kind === "sleep") {
-      line.textContent = p.wakeTime ? "Sleep logged ✓" : "Asleep since " + new Date(p.sleepStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ".";
-      return;
-    }
-    if (p.status !== "pending") { line.textContent = "Completed today ✓"; return; }
-    if (focusState.linkedPriorityId === p.id && focusState.running) { line.textContent = "In progress — timer running."; return; }
-    if (focusState.linkedPriorityId === p.id && focusState.remaining !== focusSecondsTotal()) { line.textContent = "Paused — pick up when ready."; return; }
-    line.textContent = "Not started yet.";
+  // ===================================================================
+  // HOME — rebuilt 2026-09-25. Reads only what the app already saves
+  // (prayer settings + cached times, Salah completions, today's priority,
+  // Plan My Day, habits, Top 3, Sunnah log). No new storage, no fake numbers.
+  // ===================================================================
+
+  var homeToken = 0, heroTimerId = null, heroDay = null, heroSetupMode = null;
+  var justPrayed = null, heroPainted = false, hamdardShownKey = null, priorityPickerOpen = false;
+
+  function hEl(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+  function fmtRemaining(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return (h > 0 ? h + "h " + String(m).padStart(2, "0") + "m " : m + "m ") + String(sec).padStart(2, "0") + "s";
+  }
+  function homeTimings() {
+    if (!getPrayerSettings()) return null;
+    var c = readJSON("nc_prayer_times_cache", null);
+    return c && c.date === todayKey() && c.timings ? c.timings : null;
+  }
+  function homeGreetingWord() {
+    var h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : h < 20 ? "Good evening" : "Good night";
+  }
+  function scrollToPriorityCard() {
+    var c = document.getElementById("priority-card-el");
+    if (c) c.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  // ---------- SALAH VIEW ----------
-
-  var salahCountdownIntervalId = null;
-
-  function stopSalahCountdown() {
-    if (salahCountdownIntervalId) { clearInterval(salahCountdownIntervalId); salahCountdownIntervalId = null; }
+  // ---- today's progress: completed / applicable actions, equal weight, real data only ----
+  // Applicable = prayers whose time has arrived (only when prayer times are set up),
+  // today's priority (Salah Consistency is the prayers themselves, so it isn't counted twice),
+  // Plan My Day items that weren't skipped, the user's habits, and their Top 3 tasks.
+  function homeProgress() {
+    var items = [], now = new Date();
+    var T = homeTimings(), comps = getSalahCompletions();
+    if (T) PRAYER_ORDER.forEach(function (n) { if (parseTimeToday(T[n]) <= now) items.push({ g: "Salah", done: !!comps[n] }); });
+    var p = getCurrentPriority();
+    if (p && p.date === todayKey() && p.kind !== "salah") items.push({ g: p.kind === "sleep" ? "Personal" : "Focus", done: p.status === "completed" });
+    getPlanActivities().forEach(function (a) { if (a.status !== "skipped") items.push({ g: "Focus", done: a.status === "done" }); });
+    var hl = getHabitLogToday();
+    getHabits().forEach(function (h) { items.push({ g: "Personal", done: hl[h.id] === "done" }); });
+    var t3 = getTop3(), d3 = getTop3Done();
+    t3.forEach(function (t, i) { if (t && String(t).trim()) items.push({ g: "Focus", done: !!d3[i] }); });
+    var out = { done: 0, total: items.length, percent: null, groups: {} };
+    items.forEach(function (it) {
+      var g = out.groups[it.g] || (out.groups[it.g] = { done: 0, total: 0 });
+      g.total++;
+      if (it.done) { g.done++; out.done++; }
+    });
+    if (out.total) {
+      var pct = Math.round((out.done / out.total) * 100);
+      if (out.done < out.total && pct >= 100) pct = 99;
+      if (out.done > 0 && pct < 1) pct = 1;
+      out.percent = pct;
+    }
+    return out;
   }
 
-  function startSalahCountdown(targetTime) {
-    stopSalahCountdown();
+  var HP_CIRC = 226.2; // 2 * PI * 36
+  function ensureProgressDom(host) {
+    if (host.firstChild) return;
+    host.innerHTML =
+      '<div class="hp-body">' +
+        '<div class="hp-ring"><svg viewBox="0 0 88 88" class="hp-ring-svg" aria-hidden="true">' +
+          '<defs><linearGradient id="hp-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2F7A5E"/><stop offset="1" stop-color="#C99A3D"/></linearGradient></defs>' +
+          '<circle cx="44" cy="44" r="36" class="hp-ring-track"/><circle cx="44" cy="44" r="36" class="hp-ring-fill" id="hp-ring-fill"/></svg>' +
+          '<span class="hp-pct" id="hp-pct">0%</span></div>' +
+        '<div class="hp-text"><p class="hh-eyebrow">Today</p><p class="hp-main" id="hp-main"></p><p class="hp-sub" id="hp-sub"></p><div class="hp-chips" id="hp-chips"></div></div>' +
+      '</div>' +
+      '<button type="button" class="hp-link" id="hp-link">View report ›</button>';
+    document.getElementById("hp-ring-fill").style.strokeDasharray = HP_CIRC;
+    document.getElementById("hp-ring-fill").style.strokeDashoffset = HP_CIRC;
+    document.getElementById("hp-link").addEventListener("click", function () {
+      var pr = homeProgress();
+      if (!pr.total) { startFirstAction(); return; }
+      openProgressDetails();
+    });
+  }
+  function startFirstAction() {
+    var p = getCurrentPriority();
+    if (!p || p.date !== todayKey()) { priorityPickerOpen = true; renderTodaysPriority(); }
+    scrollToPriorityCard();
+  }
+  function renderHomeProgress() {
+    var host = document.getElementById("home-progress");
+    if (!host) return;
+    ensureProgressDom(host);
+    var pr = homeProgress();
+    var has = pr.total > 0;
+    host.classList.toggle("is-empty", !has);
+    var pct = has ? pr.percent : 0;
+    document.getElementById("hp-pct").textContent = has ? pct + "%" : "—";
+    requestAnimationFrame(function () {
+      var f = document.getElementById("hp-ring-fill");
+      if (f) f.style.strokeDashoffset = HP_CIRC * (1 - pct / 100);
+    });
+    document.getElementById("hp-main").textContent = has ? pr.done + " of " + pr.total + " actions completed" : "Your day has just started.";
+    document.getElementById("hp-sub").textContent = has
+      ? (pr.done === pr.total ? "Everything planned so far is done." : (pr.total - pr.done) + " to go")
+      : "Nothing to count yet — start with one small action.";
+    var chips = document.getElementById("hp-chips");
+    chips.innerHTML = "";
+    ["Salah", "Focus", "Personal"].forEach(function (g) {
+      var gg = pr.groups[g];
+      if (!gg) return;
+      var c = hEl("span", "hp-chip" + (gg.done === gg.total ? " is-full" : ""));
+      c.appendChild(hEl("span", "hp-chip-name", g));
+      c.appendChild(hEl("span", "hp-chip-count", gg.done + "/" + gg.total));
+      chips.appendChild(c);
+    });
+    document.getElementById("hp-link").textContent = has ? "View report ›" : "Start first action ›";
+  }
+  // The timer calls this once a second; the calculation is cheap and reads saved data only.
+  function renderProgressLine() { renderHomeProgress(); }
+
+  // ---- RIGHT NOW: the current Salah, then what's next ----
+  function stopHeroTimer() { if (heroTimerId) { clearInterval(heroTimerId); heroTimerId = null; } }
+  function startHeroTimer(target, curTime) {
+    stopHeroTimer();
+    heroDay = todayKey();
     function tick() {
-      var el = document.getElementById("salah-countdown-text");
-      if (!el) { stopSalahCountdown(); return; }
-      var diff = targetTime - new Date();
-      if (diff <= 0) {
-        stopSalahCountdown();
-        renderHome();
+      var cd = document.getElementById("hero-countdown");
+      if (!cd) { stopHeroTimer(); return; }
+      var now = new Date(), diff = target - now;
+      if (diff <= 0 || todayKey() !== heroDay) {
+        stopHeroTimer();
+        var v = document.getElementById("view-home");
+        if (v && !v.classList.contains("hidden")) renderHome();
         return;
       }
-      var h = Math.floor(diff / 3600000);
-      var m = Math.floor((diff % 3600000) / 60000);
-      var s = Math.floor((diff % 60000) / 1000);
-      el.textContent = String(h).padStart(2, "0") + "h " + String(m).padStart(2, "0") + "m " + String(s).padStart(2, "0") + "s";
+      cd.textContent = fmtRemaining(diff) + " remaining";
+      var bar = document.getElementById("hero-bar-fill");
+      if (bar && curTime) bar.style.width = Math.min(100, Math.max(0, ((now - curTime) / (target - curTime)) * 100)) + "%";
     }
     tick();
-    salahCountdownIntervalId = setInterval(tick, 1000);
+    heroTimerId = setInterval(tick, 1000);
   }
 
-  function buildSalahCard(container, timings) {
-    container.innerHTML = "";
-    var next = getNextPrayer(timings);
-    var completions = getSalahCompletions();
+  function heroButton(label, cls, fn) {
+    var b = hEl("button", cls, label);
+    b.type = "button";
+    b.addEventListener("click", fn);
+    return b;
+  }
 
-    var label = document.createElement("p");
-    label.className = "salah-next-label";
-    label.textContent = next.tomorrow ? "Next Salah (tomorrow)" : "Next Salah";
-    container.appendChild(label);
-
-    var name = document.createElement("p");
-    name.className = "salah-next-name";
-    name.textContent = next.name;
-    container.appendChild(name);
-
-    var clock = document.createElement("p");
-    clock.className = "salah-next-clock";
-    clock.textContent = next.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    container.appendChild(clock);
-
-    var countdown = document.createElement("p");
-    countdown.className = "salah-countdown";
-    countdown.id = "salah-countdown-text";
-    container.appendChild(countdown);
-
-    var lastPassed = null;
-    for (var i = PRAYER_ORDER.length - 1; i >= 0; i--) {
-      if (parseTimeToday(timings[PRAYER_ORDER[i]]) <= new Date()) { lastPassed = PRAYER_ORDER[i]; break; }
-    }
-    if (!lastPassed) lastPassed = "Isha";
-
-    var markBtn = document.createElement("button");
-    markBtn.className = "btn btn-primary btn-full";
-    if (completions[lastPassed]) {
-      markBtn.textContent = lastPassed + " marked complete ✓";
-      markBtn.disabled = true;
-    } else {
-      markBtn.textContent = "Mark " + lastPassed + " Complete";
-      markBtn.addEventListener("click", function () {
-        setSalahComplete(lastPassed);
+  function paintHeroSetup(el) {
+    el.className = "hero hero-setup";
+    el.innerHTML = "";
+    el.appendChild(hEl("p", "hero-label", "Prayer times"));
+    el.appendChild(hEl("h2", "hero-setup-title", "Let NURA follow your day around Salah"));
+    el.appendChild(hEl("p", "hero-setup-text", "Your location is used only to calculate local prayer times. It isn't stored anywhere but on this device."));
+    if (heroSetupMode === "manual") {
+      var city = hEl("input", "text-input hero-input"); city.type = "text"; city.placeholder = "City";
+      var country = hEl("input", "text-input hero-input"); country.type = "text"; country.placeholder = "Country";
+      var method = hEl("select", "text-input hero-input");
+      PRAYER_METHODS.forEach(function (m) { var o = hEl("option", "", m.label); o.value = m.id; method.appendChild(o); });
+      el.appendChild(city); el.appendChild(country); el.appendChild(method);
+      el.appendChild(heroButton("Save and continue", "btn hero-cta", function () {
+        var c1 = city.value.trim(), c2 = country.value.trim();
+        if (!c1 || !c2) { showToast("Enter both city and country"); return; }
+        savePrayerSettings({ mode: "manual", city: c1, country: c2, method: Number(method.value) });
+        heroSetupMode = null;
         renderHome();
-      });
+      }));
+      el.appendChild(heroButton("← Back", "hero-link", function () { heroSetupMode = null; renderHome(); }));
+    } else {
+      el.appendChild(heroButton("Allow location", "btn hero-cta", function () {
+        if (!navigator.geolocation) { showToast("Location isn't available here — enter your city instead"); return; }
+        showToast("Getting your location…");
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          savePrayerSettings({ mode: "auto", lat: pos.coords.latitude, lon: pos.coords.longitude, method: 1 });
+          renderHome();
+        }, function () { showToast("Location permission denied — enter your city instead"); }, { timeout: 10000 });
+      }));
+      el.appendChild(heroButton("Enter city manually", "btn hero-cta-ghost", function () { heroSetupMode = "manual"; renderHome(); }));
     }
-    container.appendChild(markBtn);
-
-    if (lastPassed !== "Fajr" && !completions[lastPassed] && PRAYER_ORDER.slice(0, PRAYER_ORDER.indexOf(lastPassed)).some(function (n) { return !completions[n]; })) {
-      var recovery = document.createElement("p");
-      recovery.className = "salah-recovery-note";
-      recovery.textContent = "The next Salah is still an opportunity.";
-      container.appendChild(recovery);
-    }
-
-    var dayList = document.createElement("div");
-    dayList.className = "salah-day-list";
-    PRAYER_ORDER.forEach(function (n) {
-      var item = document.createElement("div");
-      item.className = "salah-day-item" + (completions[n] ? " done" : "") + (n === next.name && !next.tomorrow ? " current" : "");
-      var nm = document.createElement("span");
-      nm.className = "salah-day-name";
-      nm.textContent = n;
-      var mk = document.createElement("span");
-      mk.className = "salah-day-mark";
-      mk.textContent = completions[n] ? "✓" : "—";
-      item.appendChild(nm);
-      item.appendChild(mk);
-      dayList.appendChild(item);
-    });
-    container.appendChild(dayList);
-
-    startSalahCountdown(next.time);
   }
 
-  function renderSalahView(container) {
-    var settings = getPrayerSettings();
-    if (!settings) {
-      container.innerHTML = '<p class="quran-error-note">Prayer location isn’t set up. Tap “Choose a different priority” and pick Salah Consistency again.</p>';
-      return;
+  function paintHeroLoading(el) {
+    el.className = "hero hero-loading";
+    el.innerHTML = '<p class="hero-label">Right now</p><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-strip"></div>';
+  }
+
+  function paintHeroError(el) {
+    el.className = "hero hero-setup";
+    el.innerHTML = "";
+    el.appendChild(hEl("p", "hero-label", "Prayer times"));
+    el.appendChild(hEl("h2", "hero-setup-title", "Couldn't load today's times"));
+    el.appendChild(hEl("p", "hero-setup-text", "Check your internet connection and try again."));
+    el.appendChild(heroButton("Try again", "btn hero-cta", function () {
+      paintHeroLoading(el);
+      fetchPrayerTimesForToday(true).then(function () { renderHome(); }).catch(function () { paintHeroError(el); });
+    }));
+  }
+
+  function paintHero(el, T) {
+    var now = new Date(), comps = getSalahCompletions();
+    var passed = PRAYER_ORDER.filter(function (n) { return parseTimeToday(T[n]) <= now; });
+    var cur = passed.length ? passed[passed.length - 1] : null;
+    var next = getNextPrayer(T);
+    var curTime = cur ? parseTimeToday(T[cur]) : null;
+
+    el.className = "hero" + (cur ? "" : " hero-pre") + (heroPainted ? "" : " hero-enter");
+    heroPainted = true;
+    el.innerHTML = "";
+    var ctxEl = document.getElementById("home-context");
+    if (ctxEl) ctxEl.textContent = homeGreetingWord() + (cur ? " · " + cur + " time" : " · before Fajr");
+
+    var top = hEl("div", "hero-top");
+    top.appendChild(hEl("p", "hero-label", cur ? "Right now" : "Coming up"));
+    el.appendChild(top);
+
+    if (cur) {
+      var done = !!comps[cur];
+      top.appendChild(hEl("span", "hero-pill" + (done ? " is-done" + (justPrayed === cur ? " pop" : "") : ""), done ? "✓ Prayed" : "Not marked yet"));
+      el.appendChild(hEl("h2", "hero-name", cur));
+      el.appendChild(hEl("p", "hero-time", ncFmtTime(curTime) + " · until " + next.name + " " + ncFmtTime(next.time)));
+      if (!done) {
+        el.appendChild(heroButton("Mark as prayed", "btn hero-cta", function () {
+          setSalahComplete(cur);
+          justPrayed = cur;
+          renderHome();
+        }));
+      }
+    } else {
+      el.appendChild(hEl("h2", "hero-name", next.name));
+      el.appendChild(hEl("p", "hero-time", ncFmtTime(next.time) + " · the day begins at Fajr"));
     }
-    container.innerHTML = '<p class="quran-loading-note">Loading prayer times…</p>';
-    fetchPrayerTimesForToday().then(function (timings) {
-      buildSalahCard(container, timings);
+    justPrayed = null;
+
+    var strip = hEl("div", "hero-next");
+    var row = hEl("div", "hero-next-row");
+    row.appendChild(hEl("span", "hero-next-label", cur ? "Next" : "In"));
+    row.appendChild(hEl("span", "hero-next-name", cur ? next.name + (next.tomorrow ? " · tomorrow" : "") + " · " + ncFmtTime(next.time) : next.name));
+    strip.appendChild(row);
+    var cd = hEl("p", "hero-countdown", ""); cd.id = "hero-countdown";
+    strip.appendChild(cd);
+    if (cur) {
+      var bar = hEl("div", "hero-bar"); var fill = hEl("div", "hero-bar-fill"); fill.id = "hero-bar-fill";
+      bar.appendChild(fill); strip.appendChild(bar);
+    }
+    el.appendChild(strip);
+
+    var earlier = passed.filter(function (n) { return n !== cur && !comps[n]; });
+    if (earlier.length) {
+      var er = hEl("div", "hero-earlier");
+      er.appendChild(hEl("span", "hero-earlier-label", "Not marked:"));
+      earlier.forEach(function (n) {
+        er.appendChild(heroButton(n, "hero-chip", function () { setSalahComplete(n); justPrayed = null; renderHome(); }));
+      });
+      el.appendChild(er);
+    }
+    startHeroTimer(next.time, curTime);
+  }
+
+  function renderHomeHero() {
+    var el = document.getElementById("salah-hero");
+    if (!el) return;
+    var token = ++homeToken;
+    stopHeroTimer();
+    if (!getPrayerSettings()) { paintHeroSetup(el); paintHomeExtras(); return; }
+    var cached = homeTimings();
+    if (cached) paintHero(el, cached); else paintHeroLoading(el);
+    // A stalled mobile connection must never leave the hero on a skeleton forever.
+    Promise.race([
+      fetchPrayerTimesForToday(),
+      new Promise(function (_, reject) { setTimeout(function () { reject(new Error("timeout")); }, 12000); })
+    ]).then(function (T) {
+      if (token !== homeToken) return;
+      paintHero(el, T);
+      paintHomeExtras();
     }).catch(function () {
-      container.innerHTML = '<p class="quran-error-note">Could not load prayer times. Check your internet connection and try again.</p>';
+      if (token !== homeToken) return;
+      if (!cached) paintHeroError(el);
+      paintHomeExtras();
     });
+    paintHomeExtras();
+  }
+
+  // ---- the companion note (Hamdard): only when the data supports a real suggestion ----
+  function startHomeSession(label, minutes, planKey) {
+    startAdhocFocus(label, minutes, planKey);
+    renderHome();
+    scrollToPriorityCard();
+  }
+  function homeHamdardMessage() {
+    if (focusState.running || focusState.adhocLabel) return null;
+    var ctx = buildNuraContext("day"), s = ctx.salah, pri = ctx.priority, plan = ctx.plan;
+    var next = s.next && !s.next.tomorrow ? s.next : null;
+    if (next && next.inMinutes <= 15) return { text: next.name + " is in " + next.inMinutes + " min. A good moment to get ready.", cta: null };
+    var priFocus = pri.set && pri.status === "pending" && pri.kind !== "salah" && pri.kind !== "sleep";
+    var flex = plan.flexiblePending;
+    var label = priFocus ? pri.title : (flex ? flex.name : null);
+    var planKey = priFocus && pri.kind === "study" ? "study" : (flex && /study|revis|exam|homework|assignment/i.test(flex.name) ? "study" : null);
+    if (label && next) {
+      var m = Math.min(25, Math.floor((next.inMinutes - 10) / 5) * 5);
+      if (m >= 10) return {
+        text: "You have " + ncFmtMin(next.inMinutes) + " before " + next.name + ". Want to finish one " + m + "-minute focus session?",
+        cta: { label: "Start " + m + " min", fn: function () { startHomeSession(label + " — " + m + " min", m, planKey); } }
+      };
+    }
+    if (priFocus && !next) return {
+      text: "Your main task is still pending. 10 minutes is enough to restart.",
+      cta: { label: "Start 10 min", fn: function () { startHomeSession(pri.title + " — 10 min", 10, planKey); } }
+    };
+    if (!pri.set && !flex && next && next.inMinutes >= 30) return {
+      text: "You have " + ncFmtMin(next.inMinutes) + " before " + next.name + ". Want to choose one thing to move forward?",
+      cta: { label: "Choose priority", fn: startFirstAction }
+    };
+    var pr = homeProgress();
+    if (pr.total >= 3 && pr.done < pr.total && pr.done / pr.total >= 0.7) return {
+      text: "Most of today is done. Want to quickly review what remains?",
+      cta: { label: "Review", fn: function () { openProgressDetails(); } }
+    };
+    return null;
+  }
+  function renderHomeHamdard() {
+    var el = document.getElementById("hamdard-now");
+    if (!el) return;
+    var msg = homeHamdardMessage();
+    if (!msg) { el.classList.add("hidden"); el.innerHTML = ""; hamdardShownKey = null; return; }
+    var key = msg.text + "|" + (msg.cta ? msg.cta.label : "");
+    el.classList.remove("hidden");
+    if (key === hamdardShownKey && el.firstChild) return;
+    hamdardShownKey = key;
+    el.innerHTML = "";
+    var av = hEl("span", "hn-avatar", "H"); av.setAttribute("aria-hidden", "true");
+    var body = hEl("div", "hn-body");
+    body.appendChild(hEl("p", "hn-label", "Hamdard"));
+    body.appendChild(hEl("p", "hn-text", msg.text));
+    if (msg.cta) body.appendChild(heroButton(msg.cta.label, "btn hn-cta", msg.cta.fn));
+    el.appendChild(av); el.appendChild(body);
+    el.classList.remove("hn-in"); void el.offsetWidth; el.classList.add("hn-in");
+  }
+
+  // ---- quick actions: 3–4, chosen by the time of day and by what's already true ----
+  function routineDone(sectionId) {
+    var sec = ROUTINE_SECTIONS.filter(function (s) { return s.id === sectionId; })[0];
+    if (!sec) return { done: 0, total: 0 };
+    var log = getDaySunnahLog(todayKey());
+    return { done: sec.actions.filter(function (a) { return log[a.id]; }).length, total: sec.actions.length };
+  }
+  function homeActionTiles() {
+    var h = new Date().getHours();
+    var part = h < 12 ? "morning" : h < 17 ? "afternoon" : h < 20 ? "evening" : "night";
+    var p = getCurrentPriority(), today = todayKey();
+    var priStudy = p && p.date === today && p.kind === "study" && p.status === "pending";
+    var tiles = {};
+
+    var mins = getFocusDurationMinutes(), doneMin = NC_SECTIONS.study().completedMinutesToday;
+    var running = focusState.running || !!focusState.adhocLabel;
+    tiles.study = { icon: "📚", tint: "amber", title: "Study Focus",
+      sub: running ? "Session in progress" : (doneMin ? doneMin + " min done today" : mins + " min ready"),
+      cta: running ? "Resume" : "Start",
+      fn: function () { if (running) scrollToPriorityCard(); else startHomeSession("Study — " + mins + " min", mins, "study"); } };
+
+    tiles.quran = { icon: "📖", tint: "sage", title: "Qur'an", sub: "Read today's verse", cta: "Read",
+      fn: function () { setActiveView("sunnah"); switchSunnahSubtab("quran"); } };
+
+    var secId = (h >= 4 && h < 12) ? "morning-adhkar" : (h >= 15 && h < 21) ? "evening-adhkar" : "before-sleep";
+    var secTitle = secId === "morning-adhkar" ? "Morning adhkar" : secId === "evening-adhkar" ? "Evening adhkar" : "Before sleep";
+    var rd = routineDone(secId);
+    tiles.adhkar = { icon: secId === "before-sleep" ? "🌙" : "🤲", tint: "forest", title: secTitle,
+      sub: rd.total && rd.done === rd.total ? "All done today" : rd.done + " of " + rd.total + " done", cta: rd.total && rd.done === rd.total ? "Open" : "Start",
+      done: rd.total && rd.done === rd.total,
+      fn: function () { setActiveView("sunnah"); switchSunnahSubtab("routine"); } };
+
+    var asleep = p && p.date === today && p.kind === "sleep" && p.sleepStart && !p.wakeTime;
+    var sleepSub = asleep ? "Asleep since " + ncFmtTime(new Date(p.sleepStart)) : (p && p.date === today && p.kind === "sleep" && p.targetBedtime ? "Target · " + p.targetBedtime : "Set a bedtime for tonight");
+    tiles.sleep = { icon: "😴", tint: "sand", title: "Sleep", sub: sleepSub, cta: asleep || (p && p.kind === "sleep" && p.date === today) ? "View" : "Set",
+      fn: function () { if (p && p.date === today && p.kind === "sleep") scrollToPriorityCard(); else startDuniyaQuickAction("sleep-bedtime"); } };
+
+    var pl = NC_SECTIONS.plan();
+    tiles.plan = { icon: "🗓️", tint: "sand", title: "Plan my day",
+      sub: pl.total ? pl.pending + " left" + (pl.upcoming ? " · next " + ncFmtTime(parseTimeToday(pl.upcoming.startTime)) : "") : "Organise the rest of today",
+      cta: pl.total ? "Open" : "Plan", fn: function () { setActiveView("duniya-plan"); } };
+
+    var order = {
+      morning: ["quran", "adhkar", "study", "plan", "sleep"],
+      afternoon: ["study", "quran", "plan", "adhkar", "sleep"],
+      evening: ["adhkar", "study", "plan", "quran", "sleep"],
+      night: ["sleep", "adhkar", "quran", "plan", "study"]
+    }[part];
+    var picked = order.filter(function (k) { return !(k === "study" && priStudy); });
+    return picked.slice(0, 4).map(function (k) { return tiles[k]; });
+  }
+  function renderHomeActions() {
+    var host = document.getElementById("home-actions");
+    if (!host) return;
+    host.innerHTML = "";
+    host.appendChild(hEl("p", "hh-eyebrow", "Useful right now"));
+    var grid = hEl("div", "ha-grid");
+    homeActionTiles().forEach(function (t) {
+      var b = hEl("button", "ha-tile tint-" + t.tint + (t.done ? " is-done" : ""));
+      b.type = "button";
+      b.appendChild(hEl("span", "ha-icon", t.icon));
+      var txt = hEl("span", "ha-text");
+      txt.appendChild(hEl("span", "ha-title", t.title));
+      txt.appendChild(hEl("span", "ha-sub", t.sub));
+      b.appendChild(txt);
+      b.appendChild(hEl("span", "ha-cta", t.done ? "✓ " + t.cta : t.cta));
+      b.addEventListener("click", t.fn);
+      grid.appendChild(b);
+    });
+    host.appendChild(grid);
+  }
+
+  // A session starting/pausing/stopping changes what's worth suggesting; refresh just those two blocks.
+  function refreshHomeCompanion() {
+    if (document.getElementById("home-actions")) { renderHomeHamdard(); renderHomeActions(); }
+  }
+
+  function paintHomeExtras() {
+    renderHomeHamdard();
+    renderHomeActions();
+    renderHomeProgress();
+  }
+
+  function renderHome() {
+    ensureJourneyStarted();
+    var now = new Date();
+    document.getElementById("home-date").textContent = now.toLocaleDateString(undefined, { weekday: "long" }) + " · " + now.toLocaleDateString(undefined, { day: "numeric", month: "long" });
+    var name = localStorage.getItem("nc_user_name");
+    document.getElementById("home-greeting").textContent = name ? ("Assalamu Alaikum, " + name) : "Assalamu Alaikum";
+    document.getElementById("avatar-initial").textContent = name ? name.charAt(0).toUpperCase() : "N";
+    document.getElementById("home-context").textContent = homeGreetingWord();
+    document.getElementById("journey-badge-text").textContent = "DAY " + getJourneyDay();
+
+    renderTodaysPriority();
+    renderHomeHero();
   }
 
   // ---------- FITNESS VIEW ----------
@@ -1256,33 +1511,46 @@
     container.appendChild(list2);
   }
 
+  var PRIORITY_ICONS = { study: "📚", fitness: "🏋️", phone: "📵", sleep: "🌙", salah: "🕌", morning: "☀️" };
+
+  // One honest line under the title, built only from what was actually chosen.
+  function priorityMeta(p) {
+    if (p.kind === "study") return p.minutes ? p.minutes + " min focus session" : "Focus session";
+    if (p.kind === "fitness") { var bp = FITNESS_BODY_PARTS.find(function (b) { return b.key === p.bodyPart; }); return (bp ? bp.label + " · " : "") + (p.minutes ? p.minutes + " min" : "workout"); }
+    if (p.kind === "phone") return "Away from " + (p.distraction || "your phone") + (p.minutes ? " · " + p.minutes + " min" : "");
+    if (p.kind === "sleep") return p.targetBedtime ? "Target · " + p.targetBedtime : "Rest well";
+    if (p.kind === "salah") { var c = getSalahCompletions(); return PRAYER_ORDER.filter(function (n) { return c[n]; }).length + " of 5 prayers marked"; }
+    return p.minutes ? p.minutes + " min" : "Your own goal";
+  }
+
+  function renderSalahSummary(container) {
+    container.innerHTML = "";
+    container.appendChild(hEl("p", "pc-note", "Your current prayer is in Right Now, above."));
+  }
+
   function renderTodaysPriority() {
     var checkinEl = document.getElementById("priority-checkin");
     var pickerEl = document.getElementById("priority-picker");
+    var emptyEl = document.getElementById("priority-empty");
     var activeEl = document.getElementById("priority-active");
     var genericEl = document.getElementById("priority-view-generic");
     var salahEl = document.getElementById("priority-view-salah");
     var sleepEl = document.getElementById("priority-view-sleep");
-    checkinEl.classList.add("hidden");
-    pickerEl.classList.add("hidden");
-    activeEl.classList.add("hidden");
-    genericEl.classList.add("hidden");
-    salahEl.classList.add("hidden");
-    sleepEl.classList.add("hidden");
+    [checkinEl, pickerEl, emptyEl, activeEl, genericEl, salahEl, sleepEl].forEach(function (e) { e.classList.add("hidden"); });
     document.getElementById("priority-extra-content").innerHTML = "";
     document.getElementById("focus-duration-row").classList.add("hidden");
-    stopSalahCountdown();
 
     if (focusState.adhocLabel) {
+      document.getElementById("priority-icon").textContent = "⏱️";
       document.getElementById("priority-title").textContent = focusState.adhocLabel;
-      document.getElementById("priority-why").textContent = "A quick session started from Bhai AI — not today's chosen priority.";
+      document.getElementById("priority-meta").textContent = "Quick session";
+      document.getElementById("priority-why").textContent = "A quick session — separate from today's chosen priority.";
       activeEl.classList.remove("hidden");
       genericEl.classList.remove("hidden");
       document.getElementById("priority-timer-wrap").classList.remove("hidden");
       document.getElementById("priority-done-text").classList.add("hidden");
       document.getElementById("priority-change-btn").classList.add("hidden");
       updateFocusUI();
-      document.getElementById("progress-line").textContent = focusState.running ? "In progress — timer running." : "Paused — pick up when ready.";
       return;
     }
     document.getElementById("priority-change-btn").classList.remove("hidden");
@@ -1296,32 +1564,41 @@
         : "Yesterday you planned: “" + p.title + "”. What happened?";
       document.getElementById("priority-checkin-text").textContent = checkinText;
       checkinEl.classList.remove("hidden");
-      renderProgressLine(null);
+      renderProgressLine();
       return;
     }
 
     if (!p || p.date !== today) {
-      renderPresetPicker();
-      pickerEl.classList.remove("hidden");
-      renderProgressLine(null);
+      // Nothing chosen yet: an invitation first; the picker only opens on purpose (or when a
+      // Duniya tool has already started a multi-step choice).
+      if (pickerStep.view !== "main" || priorityPickerOpen) {
+        renderPresetPicker();
+        pickerEl.classList.remove("hidden");
+      } else {
+        emptyEl.classList.remove("hidden");
+      }
+      renderProgressLine();
       return;
     }
 
+    priorityPickerOpen = false;
+    document.getElementById("priority-icon").textContent = PRIORITY_ICONS[p.planKey] || "⭐";
     document.getElementById("priority-title").textContent = p.title;
+    document.getElementById("priority-meta").textContent = priorityMeta(p);
     document.getElementById("priority-why").textContent = "Why this? " + p.why;
     activeEl.classList.remove("hidden");
 
     if (p.kind === "salah") {
       salahEl.classList.remove("hidden");
-      renderSalahView(salahEl);
-      renderProgressLine(p);
+      renderSalahSummary(salahEl);
+      renderProgressLine();
       return;
     }
 
     if (p.kind === "sleep") {
       sleepEl.classList.remove("hidden");
       renderSleepView(p, sleepEl);
-      renderProgressLine(p);
+      renderProgressLine();
       return;
     }
 
@@ -1350,20 +1627,7 @@
     if (showTimer) document.getElementById("focus-duration-row").classList.toggle("hidden", !!p.minutes);
 
     updateFocusUI();
-    renderProgressLine(p);
-  }
-
-  function renderHome() {
-    ensureJourneyStarted();
-    document.getElementById("home-date").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    var name = localStorage.getItem("nc_user_name");
-    document.getElementById("home-greeting").textContent = name ? ("Assalamu Alaikum, " + name) : "Assalamu Alaikum";
-    document.getElementById("avatar-initial").textContent = name ? name.charAt(0).toUpperCase() : "N";
-    document.getElementById("home-motivation").textContent = getTodaysMotivationLine();
-    document.getElementById("journey-badge-text").textContent = "DAY " + getJourneyDay() + " OF YOUR CHANGE JOURNEY";
-
-    renderTodaysPriority();
-    renderProgressGraph();
+    renderProgressLine();
   }
 
   function initPriorityUI() {
@@ -1387,6 +1651,10 @@
     });
 
     document.getElementById("priority-change-btn").addEventListener("click", chooseDifferentPriority);
+    document.getElementById("priority-open-picker").addEventListener("click", function () {
+      priorityPickerOpen = true;
+      renderTodaysPriority();
+    });
 
     document.getElementById("progress-details-close").addEventListener("click", function () {
       document.getElementById("modal-progress-details").classList.add("hidden");
@@ -1431,7 +1699,7 @@
     pauseBtn.classList.toggle("hidden", !focusState.running);
     stopBtn.classList.toggle("hidden", focusState.remaining === total && !focusState.running);
     var resumeShown = !focusState.running && focusState.remaining > 0 && focusState.remaining < total;
-    startBtn.textContent = resumeShown ? "Resume" : "Start Now";
+    startBtn.textContent = resumeShown ? "Continue" : "Start";
     renderFocusDurationUI();
     if (getCurrentPriority()) renderProgressLine(getCurrentPriority());
   }
@@ -1478,6 +1746,7 @@
     stopFocusInterval();
     focusState.intervalId = setInterval(tickFocus, 1000);
     updateFocusUI();
+    refreshHomeCompanion();
   }
 
   function startFocusForPriority() {
@@ -1507,6 +1776,7 @@
     focusState.running = false;
     stopFocusInterval();
     updateFocusUI();
+    refreshHomeCompanion();
   }
 
   function stopFocus() {
@@ -1515,6 +1785,7 @@
     focusState.remaining = focusSecondsTotal();
     focusState.adhocLabel = null;
     updateFocusUI();
+    refreshHomeCompanion();
   }
 
   function openFocusCheckModal() {
@@ -3462,7 +3733,7 @@
       var p = getCurrentPriority();
       var last7 = getLastNDateKeys(7).reverse().map(function (k) { return { date: k, percent: getDayProgressPercent(k) }; });
       return {
-        todayPercent: computeProgressPercent(p && p.date === todayKey() ? p : null),
+        todayPercent: homeProgress().percent || 0,
         last7: last7,
         daysCompletedLast7: last7.filter(function (d) { return d.percent === 100; }).length
       };
@@ -3951,6 +4222,7 @@
     document.querySelectorAll(".view").forEach(function (v) {
       v.classList.toggle("hidden", v.dataset.view !== name);
     });
+    document.documentElement.classList.toggle("on-home", name === "home");
     var navHighlight = name.indexOf("duniya") === 0 ? "duniya" : name === "memory" ? "more" : name;
     document.querySelectorAll(".nav-btn[data-nav]").forEach(function (btn) {
       btn.classList.toggle("active", btn.dataset.nav === navHighlight);

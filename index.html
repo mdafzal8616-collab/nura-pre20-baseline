@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="on-home">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
@@ -10,38 +10,31 @@
 
 <div id="app">
 
-  <!-- HOME -->
+  <!-- HOME (rebuilt 2026-09-25): header, Right Now hero, companion note, Today's Priority,
+       Today's Progress, contextual quick actions. Everything is rendered from the app's own
+       saved data; nothing here is placeholder. -->
   <main class="view" id="view-home" data-view="home">
-    <header class="top-header">
-      <div>
-        <p class="eyebrow" id="home-date"></p>
-        <h1 id="home-greeting">Assalamu Alaikum</h1>
+    <div class="home-atmosphere" aria-hidden="true"></div>
+
+    <header class="hh-header">
+      <div class="hh-head-text">
+        <p class="hh-date" id="home-date"></p>
+        <h1 class="hh-greeting" id="home-greeting">Assalamu Alaikum</h1>
+        <p class="hh-context"><span id="home-context"></span><span class="hh-day-pill" id="journey-badge-text">DAY 1</span></p>
       </div>
-      <button class="avatar-btn" id="open-more-from-home" aria-label="Profile">
+      <button class="avatar-btn hh-avatar" id="open-more-from-home" aria-label="Profile">
         <span id="avatar-initial">N</span>
       </button>
     </header>
 
-    <p class="home-motivation" id="home-motivation">Today's small step still counts.</p>
+    <section class="hero" id="salah-hero" aria-live="polite"></section>
 
-    <div class="journey-badge">
-      <span class="journey-badge-text" id="journey-badge-text">DAY 1 OF YOUR CHANGE JOURNEY</span>
-    </div>
-
-    <div class="journey-visual" aria-hidden="true">
-      <svg viewBox="0 0 300 90" class="journey-svg">
-        <path d="M0 80 Q 90 80 140 55 T 300 15" fill="none" stroke="var(--border)" stroke-width="2"/>
-        <path d="M0 80 Q 90 80 140 55 T 210 32" fill="none" stroke="var(--mint)" stroke-width="2.5" stroke-linecap="round"/>
-        <circle cx="210" cy="32" r="5" fill="var(--mint)"/>
-        <circle cx="270" cy="18" r="14" fill="var(--gold-soft)" opacity="0.55"/>
-        <circle cx="270" cy="18" r="7" fill="var(--gold)"/>
-      </svg>
-    </div>
+    <section class="hamdard-now hidden" id="hamdard-now"></section>
 
     <div id="priority-card-home-slot"></div>
 
     <section class="card priority-card" id="priority-card-el">
-      <div class="card-row">
+      <div class="card-row pc-eyebrow-row">
         <h2>Today's Priority</h2>
       </div>
 
@@ -53,6 +46,13 @@
             <button class="action-btn" id="checkin-partly-btn">Partly</button>
             <button class="action-btn warn" id="checkin-notyet-btn">Not yet</button>
           </div>
+        </div>
+
+        <div id="priority-empty" class="pc-empty hidden">
+          <span class="pc-empty-icon" aria-hidden="true">🌱</span>
+          <p class="pc-empty-title">What would make today feel successful?</p>
+          <p class="pc-empty-sub">Pick one thing. NURA will help you do it.</p>
+          <button class="btn pc-cta" id="priority-open-picker" type="button">Choose today's priority</button>
         </div>
 
         <div id="priority-picker" class="hidden">
@@ -69,7 +69,13 @@
         </div>
 
         <div id="priority-active" class="hidden">
-          <p class="priority-title" id="priority-title"></p>
+          <div class="pc-title-row">
+            <span class="pc-icon" id="priority-icon" aria-hidden="true">⭐</span>
+            <div class="pc-title-text">
+              <p class="priority-title" id="priority-title"></p>
+              <p class="pc-meta" id="priority-meta"></p>
+            </div>
+          </div>
           <p class="priority-why" id="priority-why"></p>
 
           <div id="priority-view-generic">
@@ -88,7 +94,7 @@
               </div>
               <p class="focus-clock" id="focus-clock">20:00</p>
               <div class="focus-controls">
-                <button class="btn btn-primary btn-full" id="focus-start-btn">Start Now</button>
+                <button class="btn btn-primary btn-full pc-cta" id="focus-start-btn">Start</button>
                 <button class="btn btn-outline btn-full hidden" id="focus-pause-btn">Pause</button>
                 <button class="btn btn-outline btn-full hidden" id="focus-stop-btn">Finish</button>
               </div>
@@ -104,22 +110,9 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-row">
-        <h2>Today's Progress</h2>
-      </div>
-      <div class="progress-ring-row">
-        <div class="progress-ring-wrap">
-          <svg viewBox="0 0 80 80" class="progress-ring-svg">
-            <circle cx="40" cy="40" r="34" class="progress-ring-track"/>
-            <circle cx="40" cy="40" r="34" class="progress-ring-fill" id="progress-ring-fill"/>
-          </svg>
-          <span class="progress-ring-percent" id="progress-ring-percent">0%</span>
-        </div>
-        <p class="muted-line" id="progress-line">Not started yet.</p>
-      </div>
-      <div id="progress-graph-container"></div>
-    </section>
+    <section class="hh-progress" id="home-progress" aria-label="Today's progress"></section>
+
+    <section class="hh-actions" id="home-actions" aria-label="Useful next actions"></section>
   </main>
 
   <!-- SUNNAH -->
@@ -585,7 +578,7 @@
 
     <section class="card">
       <h2>About this build</h2>
-      <p class="muted-line">NURA — Pre-20 September baseline. Restored from the project as it stood on 19 Sep 2026 (commit a6e47e0), with one addition: Bhai now reads your real NURA data to suggest a next step. It keeps its own data on this device, separate from the current NURA app.</p>
+      <p class="muted-line">NURA — Pre-20 September baseline. Restored from the project as it stood on 19 Sep 2026 (commit a6e47e0), with two changes: Bhai now reads your real NURA data to suggest a next step, and the Home screen was rebuilt on 25 Sep 2026 (Sunnah, Duniya, AI Chat and More are unchanged). It keeps its own data on this device, separate from the current NURA app.</p>
     </section>
   </main>
 
