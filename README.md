@@ -31,8 +31,20 @@ Only the Home screen was rebuilt (Sunnah, Duniya, AI Chat and More are unchanged
 New screen, opened from Home's progress card (not a tab; the bottom nav is unchanged). Sunnah, Duniya, More, AI Chat and the Home layout are otherwise unchanged; Study Mission is not built.
 
 - **Today:** the user's own planned actions in time order (Morning / Afternoon / Evening / Night / Anytime), with NOW and NEXT markers, a checkbox per action, and a summary ("7 of 10 planned actions completed"). Simple ticks, counts (3 / 5 pages), time (32 / 45 min), quantity (18 / 30) and values (sleep 7h 10m) are all supported; measured actions contribute value/target to the percentage.
-- **Week (Life Grid):** task rows × Mon–Sun, one cell per day: done ✓, partial ◐, not yet ○, not completed ·, skipped –, moved ↷, planned (dotted), not planned (blank). Past days can be corrected by tapping the cell. Summary lines only appear when enough planned days exist; the end-of-week reflection is optional.
+- **Week (Life Grid):** task rows × Mon–Sun, one cell per day: done ✓, partial ◐, not yet ○, not completed ·, skipped ⊘, moved ↷, planned (dotted), not planned —. Past days can be corrected by tapping the cell. Summary lines only appear when enough planned days exist; the end-of-week reflection is optional.
 - **Plan control:** add (name, kind, tracking type, time, repeat: today / every day / weekdays / chosen days), edit, skip today, move to tomorrow or a date, stop repeating (history kept). Suggestions ("Five daily prayers", adhkar routines, existing habits) are one tap and never added automatically.
 - **Linked actions** read and write NURA's existing Salah completions, Sunnah log and habit log instead of copying them, so ticking Fajr here and on Home is one fact.
 - **Storage:** `nc_flow_actions`, `nc_flow_log_YYYY-MM` (one shard per month), `nc_flow_miles`, `nc_flow_reflect`. Nothing existing was migrated.
 - **Home progress** now counts the Flow; automatic counting of elapsed prayers is only a fallback when there is no Flow plan for today.
+
+## Daily Flow — five fixes — 2026-09-26
+
+Only these five items were changed; Study Mission is still not built.
+
+1. **Past dates stay honest.** An action exists from its `startDate`; earlier days are "not planned" (—), never missed. Editing a schedule (days, time, target, type) now adds a *version* effective from today (tomorrow if today already has an outcome), so past days keep the schedule they were planned under instead of being rewritten.
+2. **Consistency, not streaks.** Counted over *planned* days only (a Mon/Wed/Fri action has no Tuesday to break), skipped/moved days are set aside, today only counts once it has an outcome. Shown as "3 planned days in a row" or "Done 4 of the last 5 planned days". Salah shows nothing; worship routines show only the neutral ratio.
+3. **Hamdard reads real Flow history.** `NC_SECTIONS.flow` → `flowContext()`: per-action planned/done/partial/missed/skipped/moved, times, schedule, recent outcomes and patterns, each pattern a FACT plus a separate optional SUGGESTION. A claim needs ≥ 3 planned days behind it; otherwise Hamdard says there isn't enough history. Salah/Deen items are only counted, never analysed. New chat option "How is my plan going?".
+4. **Reschedule duplicate fixed at the data level.** A move is one exception on the template (`ex[originDate] = {to}`), never a copied one-off. Moving again updates that same exception (Mon → Tue → Wed = one occurrence). Moving onto a day the action already occupies is refused. Undo on the original day restores it. The first Daily Flow build's copy-based moves are folded into exceptions once on load (`nc_flow_schema` = 2).
+5. **"Create your own goal".** No longer becomes a Study Focus/timer. It opens a short setup (name, when/how often, optional time, how it's tracked), and Finish saves it into Daily Flow, shows it as today's priority with a checkbox/stepper (no timer), and counts it once in Today/Home/Life Grid. NURA files the goal (kind + tag such as "Routine · Education") and reads measures from the name ("20 pages", "30 minutes") only as visible, editable suggestions. One optional idea may follow (e.g. repeat Mon–Fri) and is never applied unasked.
+
+Not done, on purpose: reminders (this is a web build with no notification permission, so no reminder control is shown).

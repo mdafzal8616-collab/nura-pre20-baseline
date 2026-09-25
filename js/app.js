@@ -69,8 +69,10 @@
     }, 1800);
   }
 
+  var uidSeq = 0;
   function uid(prefix) {
-    return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    // the counter keeps ids unique even when several are made in the same millisecond
+    return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000) + "-" + (uidSeq++);
   }
 
   // ---------- CHANGE JOURNEY DAY ----------
@@ -819,6 +821,8 @@
     if (dateKey === todayKey()) {
       var hp = homeProgress(); return hp.total ? hp.percent : 0;
     }
+    // a day with planned Daily Flow actions is measured by them (same numbers as the Life Grid)
+    if (dateKey < todayKey()) { var fdp = flowDay(dateKey); if (fdp.pct !== null) return fdp.pct; }
     var log = readJSON("nc_priority_log", []);
     var entries = log.filter(function (e) { return e.date === dateKey; });
     if (!entries.length) return null;
@@ -962,7 +966,8 @@
     var T = homeTimings(), comps = getSalahCompletions();
     if (T && !flowSalah && !fd.items.length) PRAYER_ORDER.forEach(function (n) { if (parseTimeToday(T[n]) <= now) items.push({ g: "Salah", done: !!comps[n] }); });
     var p = getCurrentPriority();
-    if (p && p.date === todayKey() && p.kind !== "salah") items.push({ g: p.kind === "sleep" ? "Personal" : "Focus", done: p.status === "completed" });
+    // a goal created in Daily Flow is already counted through the Flow; counting its priority too would double it
+    if (p && p.date === todayKey() && p.kind !== "salah" && !p.flowId) items.push({ g: p.kind === "sleep" ? "Personal" : "Focus", done: p.status === "completed" });
     getPlanActivities().forEach(function (a) { if (a.status !== "skipped") items.push({ g: "Focus", done: a.status === "done" }); });
     var hl = getHabitLogToday();
     getHabits().forEach(function (h) { if (!flowHabit[h.id]) items.push({ g: "Personal", done: hl[h.id] === "done" }); });
@@ -1236,7 +1241,7 @@
     var ctx = buildNuraContext("day"), s = ctx.salah, pri = ctx.priority, plan = ctx.plan;
     var next = s.next && !s.next.tomorrow ? s.next : null;
     if (next && next.inMinutes <= 15) return { text: next.name + " is in " + next.inMinutes + " min. A good moment to get ready.", cta: null };
-    var priFocus = pri.set && pri.status === "pending" && pri.kind !== "salah" && pri.kind !== "sleep";
+    var priFocus = pri.set && pri.status === "pending" && pri.kind !== "salah" && pri.kind !== "sleep" && !pri.custom;
     var flex = plan.flexiblePending;
     var label = priFocus ? pri.title : (flex ? flex.name : null);
     var planKey = priFocus && pri.kind === "study" ? "study" : (flex && /study|revis|exam|homework|assignment/i.test(flex.name) ? "study" : null);
@@ -1549,7 +1554,89 @@
     if (p.kind === "phone") return "Away from " + (p.distraction || "your phone") + (p.minutes ? " · " + p.minutes + " min" : "");
     if (p.kind === "sleep") return p.targetBedtime ? "Target · " + p.targetBedtime : "Rest well";
     if (p.kind === "salah") { var c = getSalahCompletions(); return PRAYER_ORDER.filter(function (n) { return c[n]; }).length + " of 5 prayers marked"; }
+    if (p.flowId) { var ga = flowActionById(p.flowId); if (ga && flowApplies(ga, todayKey())) return goalMeta(ga); }
     return p.minutes ? p.minutes + " min" : "Your own goal";
+  }
+
+  // ---- a custom goal ("Create your own goal") is a Daily Flow action; the priority card only shows it ----
+  // It gets a checkbox / progress control, never a timer: NURA does not decide what the goal means.
+  function isGoalPriority(p) { return !!(p && (p.flowId || (!p.planKey && !p.kind))); }
+  function goalMeta(a) {
+    var today = todayKey(), st = flowState(a, today), V = flowVer(a, today), bits = [];
+    var t = flowTimeFor(a, today, true); if (t) bits.push(flowClock(t));
+    bits.push(V.type === "simple" ? (a.tag || "Simple tick") : flowProgressText(V, st.v));
+    return bits.join(" · ");
+  }
+  function setGoalPriority(a) {
+    var p = { id: uid("pri"), planKey: null, kind: null, flowId: a.id, title: a.name, why: "You chose this as what matters most today.", minutes: null, date: todayKey(), status: "pending" };
+    savePriority(p);
+    focusState.linkedPriorityId = null;
+    focusPrepShownForPriorityId = null;
+    return p;
+  }
+  // keep the priority in step with the Flow action it points at (one source of truth for "done")
+  function syncGoalPriority() {
+    var p = getCurrentPriority(), today = todayKey();
+    if (!p || !p.flowId || p.date !== today) return;
+    var a = flowActionById(p.flowId), st = a && flowApplies(a, today) ? flowState(a, today) : null;
+    if (!st || st.kind === "skip" || st.kind === "rs") { savePriority(null); return; } // removed, skipped or moved: nothing left to track today
+    var want = st.kind === "done" ? "completed" : "pending";
+    if (p.status !== want || p.title !== a.name) { p.status = want; p.title = a.name; savePriority(p); }
+  }
+  // the next day: record how it went from the Flow itself instead of asking again
+  function resolveGoalPriority(p) {
+    var a = flowActionById(p.flowId), st = a && flowApplies(a, p.date) ? flowState(a, p.date) : null;
+    if (st && st.kind !== "skip" && st.kind !== "rs") {
+      appendPriorityLog({ date: p.date, planKey: null, title: p.title, minutes: null, status: st.kind === "done" ? "completed" : st.kind === "partial" ? "partial" : "not-yet", source: "flow" });
+    }
+    savePriority(null);
+  }
+  function renderGoalPriority(p, el) {
+    el.innerHTML = ""; el.classList.remove("hidden");
+    var today = todayKey(), a = p.flowId ? flowActionById(p.flowId) : null;
+    var done = p.status === "completed";
+    if (a) {
+      var st = flowState(a, today), V = flowVer(a, today);
+      done = st.kind === "done";
+      if (V.type !== "simple") {
+        var mb = hEl("div", "fl-mbar"); var mf = hEl("span", "fl-mbar-fill"); mf.style.width = Math.round(st.frac * 100) + "%"; mb.appendChild(mf);
+        el.appendChild(mb);
+        if (V.type !== "value") {
+          var row = hEl("div", "fl-stepper");
+          var minus = hEl("button", "fl-step", "−"); minus.type = "button"; minus.setAttribute("aria-label", "Less");
+          minus.addEventListener("click", function () { flowSetValue(a, today, Math.max(0, st.v - flowStep(V))); });
+          var set = hEl("button", "fl-step fl-step-wide", "Set"); set.type = "button";
+          set.addEventListener("click", function () { openFlowValueSheet(a, today); });
+          var plus = hEl("button", "fl-step", "+"); plus.type = "button"; plus.setAttribute("aria-label", "More");
+          plus.addEventListener("click", function () { flowSetValue(a, today, st.v + flowStep(V)); });
+          row.appendChild(minus); row.appendChild(set); row.appendChild(plus);
+          el.appendChild(row);
+        } else {
+          var lg = hEl("button", "fl-step fl-step-wide", st.v ? "Edit" : "Log"); lg.type = "button";
+          lg.addEventListener("click", function () { openFlowValueSheet(a, today); });
+          el.appendChild(lg);
+        }
+      }
+    }
+    var toggle = function () {
+      if (a) { flowToggle(a, today); return; }
+      p.status = p.status === "completed" ? "pending" : "completed"; savePriority(p);
+      renderTodaysPriority();
+    };
+    if (done) {
+      el.appendChild(hEl("p", "priority-done-text", "Completed today ✓"));
+      var undo = hEl("button", "priority-change-link", "Undo"); undo.type = "button"; undo.addEventListener("click", toggle);
+      el.appendChild(undo);
+    } else {
+      var b = hEl("button", "btn btn-primary btn-full pc-cta", a && flowVer(a, today).type !== "simple" ? "Mark complete" : "Mark done"); b.type = "button";
+      b.addEventListener("click", toggle);
+      el.appendChild(b);
+    }
+    if (a) {
+      var open = hEl("button", "priority-change-link", "Open in Daily Flow ›"); open.type = "button";
+      open.addEventListener("click", function () { openFlow("today"); });
+      el.appendChild(open);
+    }
   }
 
   function renderSalahSummary(container) {
@@ -1565,7 +1652,10 @@
     var genericEl = document.getElementById("priority-view-generic");
     var salahEl = document.getElementById("priority-view-salah");
     var sleepEl = document.getElementById("priority-view-sleep");
-    [checkinEl, pickerEl, emptyEl, activeEl, genericEl, salahEl, sleepEl].forEach(function (e) { e.classList.add("hidden"); });
+    var goalEl = document.getElementById("priority-view-goal");
+    [checkinEl, pickerEl, emptyEl, activeEl, genericEl, salahEl, sleepEl, goalEl].forEach(function (e) { e.classList.add("hidden"); });
+    var pg = getCurrentPriority();
+    if (pg && pg.flowId && pg.date !== todayKey()) resolveGoalPriority(pg);
     document.getElementById("priority-extra-content").innerHTML = "";
     document.getElementById("focus-duration-row").classList.add("hidden");
 
@@ -1617,6 +1707,8 @@
     document.getElementById("priority-why").textContent = "Why this? " + p.why;
     activeEl.classList.remove("hidden");
 
+    if (isGoalPriority(p)) { renderGoalPriority(p, goalEl); renderProgressLine(); return; }
+
     if (p.kind === "salah") {
       salahEl.classList.remove("hidden");
       renderSalahSummary(salahEl);
@@ -1665,14 +1757,17 @@
     document.getElementById("checkin-partly-btn").addEventListener("click", function () { submitAccountability("partial"); });
     document.getElementById("checkin-notyet-btn").addEventListener("click", function () { submitAccountability("not-yet"); });
 
+    // "Create your own goal": nothing is decided from the words. The goal opens a short setup (when, how
+    // often, how it's tracked); Finish saves it into Daily Flow and shows it here as today's priority.
     function saveCustom() {
       var input = document.getElementById("priority-custom-input");
       var val = input.value.trim();
       if (!val) return;
-      setTodaysPriority(null, val);
-      input.value = "";
-      pendingAdjustmentNote = null;
-      renderHome();
+      openFlowAddSheet(null, { goal: true, name: val, onCreated: function (a) {
+        input.value = "";
+        pendingAdjustmentNote = null;
+        if (flowApplies(a, todayKey())) { setGoalPriority(a); priorityPickerOpen = false; }
+      } });
     }
     document.getElementById("priority-custom-btn").addEventListener("click", saveCustom);
     document.getElementById("priority-custom-input").addEventListener("keydown", function (e) {
@@ -3723,7 +3818,7 @@
     priority: function () {
       var p = getCurrentPriority();
       if (!p || p.date !== todayKey()) return { set: false };
-      return { set: true, title: p.title, kind: p.kind, minutes: p.minutes || null, status: p.status, running: focusState.linkedPriorityId === p.id && focusState.running };
+      return { set: true, title: p.title, kind: p.kind, custom: isGoalPriority(p), minutes: p.minutes || null, status: p.status, running: focusState.linkedPriorityId === p.id && focusState.running };
     },
     study: function () {
       var today = todayKey(), week = getLastNDateKeys(7);
@@ -3774,17 +3869,21 @@
       });
     },
     phone: function () { return { nativeAvailable: !!window.NuraNative }; },
+    // The user's own Daily Flow history, read-only: what was planned, done, missed, skipped, moved, and at what
+    // time, with the evidence behind every pattern. Rule-based replies (and any future model) may only say
+    // what is in here; see flowContext() for how facts and suggestions are kept apart.
     flow: function () {
-      var d = flowDay(todayKey()), start = fdWeekStart(todayKey()), wk = flowWeekData(start);
-      return { todayDone: d.done, todayPlanned: d.total, weekDone: wk.totalD, weekPlanned: wk.totalP,
-        perAction: wk.rows.filter(function (r) { return r.planned >= 3; }).slice(0, 6).map(function (r) { return { name: r.a.name, plannedDays: r.planned, doneDays: r.done }; }) };
+      var c = flowContext(), wk = flowWeekData(fdWeekStart(todayKey()));
+      c.thisWeek = { done: wk.totalD, planned: wk.totalP };
+      return c;
     }
   };
 
   var NC_TOPICS = {
     day: ["profile", "now", "salah", "plan", "priority", "progress", "habits", "flow"],
     routine: ["profile", "now", "salah", "plan", "priority", "habits"],
-    study: ["profile", "now", "salah", "plan", "priority", "study"],
+    study: ["profile", "now", "salah", "plan", "priority", "study", "flow"],
+    pattern: ["profile", "now", "flow"],
     sleep: ["profile", "now", "salah", "sleep"],
     fitness: ["profile", "now", "priority", "fitness"],
     progress: ["profile", "now", "progress", "study", "fitness", "habits", "flow"],
@@ -3792,7 +3891,7 @@
     phone: ["profile", "now", "phone"],
     general: ["profile", "now", "salah", "priority"]
   };
-  var NC_LABELS = { salah: "today's Salah", plan: "your plan for today", priority: "today's priority", study: "study history", sleep: "sleep", fitness: "fitness", habits: "habits", progress: "your progress", recovery: "your recovery counts (numbers only)", phone: "phone control availability", flow: "your Daily Flow (counts only)" };
+  var NC_LABELS = { salah: "today's Salah", plan: "your plan for today", priority: "today's priority", study: "study history", sleep: "sleep", fitness: "fitness", habits: "habits", progress: "your progress", recovery: "your recovery counts (numbers only)", phone: "phone control availability", flow: "your Daily Flow history (planned, done, missed; worship items only counted)" };
 
   function buildNuraContext(topic) {
     var names = NC_TOPICS[topic] || NC_TOPICS.general;
@@ -3836,6 +3935,10 @@
       var m = fit(Math.min(flex.durationMinutes || 10, 10));
       if (m) return { line: "Next on your plan: “" + flex.name + "”. Start small — " + m + " minutes." + clear, action: bhSession(flex.name + " — first " + m + " min", m, /study|revis|exam|homework|assignment/i.test(flex.name) ? "study" : null) };
       return { line: "Next on your plan: “" + flex.name + "”, but " + until + " is close. Do the tiny first step now, then pick it up after.", action: null };
+    }
+    if (pri.set && pri.custom && pri.status === "pending") {
+      // the user's own goal: NURA doesn't know what it means, so it never turns it into a timer
+      return { line: "Your own goal for today, “" + pri.title + "”, is still open. Tick it in Daily Flow when it's done." + clear, action: { label: "Open Daily Flow", nav: true, fn: function () { openFlow("today"); } } };
     }
     if (pri.set && pri.status === "pending" && pri.kind !== "salah" && pri.kind !== "sleep") {
       var m2 = fit(Math.min(pri.minutes || 10, 10));
@@ -3897,7 +4000,47 @@
         if (m2) { lines.push(m2 + " minutes on one subject beats a long plan you don't start."); actions.push(bhSession("Study — " + m2 + " min", m2, "study")); }
       }
       if (ctx.study.completedMinutesToday) lines.push("You've already finished " + ctx.study.completedMinutesToday + " min of study today.");
+      // what the user's own Daily Flow history shows about study — a fact first, then an idea kept separate
+      var sp = ctx.flow.patterns.filter(function (p) { return p.category === "study"; })[0];
+      if (sp) { lines.push("From your records: " + sp.fact); if (sp.suggestion) lines.push("An idea, not a fact: " + sp.suggestion); }
       if (room !== null && room <= 30) lines.push(ctx.salah.next.name + " is in " + room + " min, so I kept it short.");
+      return { ctx: ctx, lines: lines, actions: actions };
+    },
+    // Pattern talk: only what the Daily Flow records show. FACT lines and IDEA lines are kept apart, and with
+    // too little history the honest answer is that there isn't enough yet.
+    "flow-pattern": function (text) {
+      var ctx = buildNuraContext("pattern"), f = ctx.flow, lines = [], actions = [];
+      var scope = /(study|revis|homework|exam)/i.test(text || "") ? "study" : /(gym|workout|exercise|fitness|run)/i.test(text || "") ? "fitness" : null;
+      var nonWorship = f.actions.filter(function (a) { return !a.worship; });
+      if (!f.actions.length) {
+        lines.push("You haven't planned anything in Daily Flow yet, so there's no history for me to look at.");
+        return { ctx: ctx, lines: lines, actions: [{ label: "Open Daily Flow", nav: true, fn: function () { openFlow("today"); } }] };
+      }
+      var pats = f.patterns.filter(function (p) { return !scope || p.category === scope; });
+      if (f.week.planned >= 3) lines.push("Last 7 days: " + f.week.done + " of " + f.week.planned + " planned actions completed" + (f.week.skipped || f.week.moved ? " (" + [f.week.skipped ? f.week.skipped + " skipped" : "", f.week.moved ? f.week.moved + " moved" : ""].filter(Boolean).join(", ") + " set aside)" : "") + ".");
+      if (!pats.length) {
+        var scoped = scope ? nonWorship.filter(function (a) { return a.category === scope; }) : nonWorship;
+        var judged = scoped.reduce(function (n, a) { return n + a.window.planned; }, 0);
+        if (scope && !scoped.length) lines.push("You don't have a " + scope + " action in Daily Flow, so I have nothing to base anything on.");
+        else if (judged < FLOW_PAT_MIN) lines.push("There isn't enough history yet to identify a pattern" + (judged ? " — only " + judged + " planned day" + (judged === 1 ? "" : "s") + " recorded so far." : "."));
+        else {
+          lines.push("I don't see a clear pattern in your records right now. That's a fact about the data, not a verdict on you.");
+          scoped.filter(function (a) { return a.scheduleChanged; }).slice(0, 2).forEach(function (a) {
+            lines.push("“" + a.name + "” was rescheduled recently, so its earlier days don't count as evidence for the new schedule yet.");
+          });
+        }
+      } else {
+        pats.slice(0, 3).forEach(function (p) {
+          lines.push("From your records: " + p.fact);
+          if (p.suggestion) lines.push("An idea, not a fact: " + p.suggestion);
+        });
+        var edit = pats.filter(function (p) { return p.canEdit; })[0];
+        if (edit) actions.push({ label: "Adjust “" + (flowActionById(edit.actionId) || { name: "it" }).name + "”", nav: true, fn: function () {
+          var a = flowActionById(edit.actionId);
+          openFlow("today"); if (a) openFlowAddSheet(a);
+        } });
+      }
+      lines.push("This comes only from what you've planned and ticked in Daily Flow. Nothing is inferred beyond that.");
       return { ctx: ctx, lines: lines, actions: actions };
     },
     "missed-routine": function () {
@@ -3934,8 +4077,10 @@
       var ctx = buildNuraContext("progress"), lines = [], p = ctx.progress;
       var logged = p.last7.filter(function (d) { return d.percent !== null; }).length;
       lines.push(logged
-        ? "In the last 7 days you finished your priority on " + p.daysCompletedLast7 + " of " + logged + " day" + (logged === 1 ? "" : "s") + " you set one."
-        : "There isn't a week of priority history yet, so any \"trend\" from me would be a guess.");
+        ? "In the last 7 days you finished everything you'd planned on " + p.daysCompletedLast7 + " of " + logged + " day" + (logged === 1 ? "" : "s") + " with a record."
+        : "There isn't a week of history yet, so any \"trend\" from me would be a guess.");
+      if (ctx.flow.week.planned >= 3) lines.push("Daily Flow, last 7 days: " + ctx.flow.week.done + " of " + ctx.flow.week.planned + " planned actions completed.");
+      if (ctx.flow.patterns.length) lines.push("From your records: " + ctx.flow.patterns[0].fact);
       if (ctx.study.completedLast7Days) lines.push(ctx.study.completedLast7Days + " study session" + (ctx.study.completedLast7Days === 1 ? "" : "s") + " completed this week.");
       lines.push("Today's ring is at " + p.todayPercent + "%.");
       lines.push("One thing to improve next week: set a priority every morning — that's what all of this is built from.");
@@ -3996,6 +4141,7 @@
     { id: "quran", re: /(quran|qur'an|\bayah\b|\bverse\b|surah|hadith|\bduas?\b|tafsir)/i },
     { id: "want-smoke", re: /(smok|cigarette|vape|nicotine)/i },
     { id: "urge-porn", re: /(porn|masturbat|relaps|\burges?\b|\bcravings?\b)/i },
+    { id: "flow-pattern", re: /(pattern|consisten|daily flow|life grid|my plan\b|keep missing|(always|never|usually|often) (struggle|miss|fail|finish|complete|do)|how('?s| is) my plan)/i },
     { id: "study-help", re: /(study|studying|exam|homework|revision|revise|assignment|concentrat|focus)/i },
     { id: "sleep", re: /(sleep|insomnia|bedtime|can'?t sleep|wake up)/i },
     { id: "fitness", re: /(workout|gym|exercise|fitness|run\b|running)/i },
@@ -4016,7 +4162,8 @@
     { id: "want-smoke", label: "I feel like smoking" },
     { id: "urge-porn", label: "I'm getting an urge" },
     { id: "study-help", label: "Help me study" },
-    { id: "missed-routine", label: "I missed my routine" }
+    { id: "missed-routine", label: "I missed my routine" },
+    { id: "flow-pattern", label: "How is my plan going?" }
   ];
 
   function renderChatOptions() {
@@ -10515,14 +10662,24 @@
   // ticks it as it happens, and the ticks accumulate into a weekly grid.
   //
   //   nc_flow_actions          [DailyAction]  what the user planned (their choice only)
-  //   nc_flow_log_YYYY-MM      {date:{actionId:{v}|{s:"skip"}|{s:"rs",to}}}  one shard per month,
+  //   nc_flow_log_YYYY-MM      {date:{actionId:{v}|{s:"skip"}}}  one shard per month,
   //                            so opening a week never reads more than two small blobs
   //   nc_flow_miles            {date:{key:1}}  milestones already shown (never repeated)
   //   nc_flow_reflect          {weekStart:"easy|balanced|difficult"}
   //
-  // DailyAction { id, name, type: simple|count|time|quantity|value, category, time:"HH:MM"|null,
-  //   target:number|null, unit:string, repeat:{kind:once|daily|weekdays|days, date?, days?[Mon=0]},
-  //   startDate, archivedAt|null, createdAt, link?:{kind:salah|sunnah|habit, key}, fromId? }
+  // DailyAction (the recurring TEMPLATE; an "occurrence" is this template on one date)
+  //   { id, name, category, tag?, startDate, archivedAt|null, createdAt, link?:{kind:salah|sunnah|habit, key},
+  //     type: simple|count|time|quantity|value, target:number|null, unit:string, time:"HH:MM"|null,
+  //     repeat:{kind:once|daily|weekdays|days, date?, days?[Mon=0]},     <- the CURRENT schedule
+  //     vers?: [{from, type, target, unit, time, repeat}]                <- schedule history, oldest first
+  //     ex?:   {originDate:{to:date}} }                                  <- moved occurrences
+  //
+  // Three rules keep history honest:
+  //  1. An action exists from `startDate`. Dates before it are "not planned" (never "missed").
+  //  2. Changing the schedule (days, time, target, type) adds a version effective from TODAY, so past days
+  //     are still judged against the schedule that was actually in force then.
+  //  3. Moving an occurrence never copies the template. It writes one exception (originDate -> newDate),
+  //     so the template has exactly one occurrence per origin no matter how often it is moved again.
   //
   // A `link` makes an action read/write the data NURA already keeps (Salah completions, Sunnah log,
   // habit log) instead of duplicating it — ticking Fajr here and on Home are the same fact.
@@ -10545,7 +10702,7 @@
   ];
   var FLOW_TYPES = [
     { k: "simple", label: "Simple tick" }, { k: "count", label: "Count (pages, rakah…)" }, { k: "time", label: "Time (minutes)" },
-    { k: "quantity", label: "Quantity (questions…)" }, { k: "value", label: "Value (e.g. sleep hours)" }
+    { k: "quantity", label: "Quantity (litres, questions…)" }, { k: "value", label: "Value (e.g. sleep hours)" }
   ];
   var FLOW_SECTIONS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["night", "Night"], ["any", "Anytime today"]];
   var FD_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -10582,16 +10739,42 @@
   }
 
   // ---- when does an action apply? ----
-  function flowApplies(a, dk) {
-    if (a.archivedAt && dk >= a.archivedAt) return false;
-    if (dk < a.startDate) return false;
-    var r = a.repeat || { kind: "once" };
+  // The schedule in force on a date (older dates keep the schedule they were planned under).
+  function flowVer(a, dk) {
+    var v = a.vers;
+    if (!v || !v.length) return a;
+    var pick = v[0];
+    for (var i = 0; i < v.length; i++) { if (v[i].from <= dk) pick = v[i]; }
+    return pick;
+  }
+  // Would the schedule itself put an occurrence on this date (ignoring moves)?
+  function flowNativeApplies(a, dk) {
+    var r = flowVer(a, dk).repeat || { kind: "once" };
     if (r.kind === "once") return r.date === dk;
     if (r.kind === "daily") return true;
     var dow = fdDow(dk);
     if (r.kind === "weekdays") return dow <= 4;
     if (r.kind === "days") return (r.days || []).indexOf(dow) !== -1;
     return false;
+  }
+  // Moved occurrences: ex[originDate] = {to}. One origin = one occurrence, however often it is moved.
+  function flowMovedInFrom(a, dk) {
+    if (!a.ex) return null;
+    for (var o in a.ex) { if (a.ex.hasOwnProperty(o) && a.ex[o].to === dk) return o; }
+    return null;
+  }
+  function flowMovedOutTo(a, dk) {
+    var e = a.ex && a.ex[dk];
+    if (!e) return null;
+    if (dk < a.startDate || (a.archivedAt && dk >= a.archivedAt)) return null;
+    return flowNativeApplies(a, dk) ? e.to : null;
+  }
+  // Is there an occurrence on this date? (A moved-out one still counts as "there": it shows as moved.)
+  function flowApplies(a, dk) {
+    if (a.archivedAt && dk >= a.archivedAt) return false;
+    if (flowMovedInFrom(a, dk)) return true;
+    if (dk < a.startDate) return false;
+    return flowNativeApplies(a, dk);
   }
 
   // ---- linked data (Salah / Sunnah / habits): read and write the app's own stores ----
@@ -10632,21 +10815,26 @@
 
   // ---- state of one action on one date ----
   function flowState(a, dk) {
+    var V = flowVer(a, dk);
+    if (!flowMovedInFrom(a, dk)) {
+      var to = flowMovedOutTo(a, dk);
+      if (to) return { kind: "rs", to: to, frac: 0, v: 0 };
+    }
     var e = flowEntry(dk, a.id);
     if (e && e.s === "skip") return { kind: "skip", frac: 0, v: 0 };
-    if (e && e.s === "rs") return { kind: "rs", to: e.to, frac: 0, v: 0 };
     var v = 0, frac = 0;
     if (a.link) { var L = flowLinkRead(a, dk); v = L.v; frac = L.frac; }
-    else if (a.type === "simple") { v = e && e.v ? 1 : 0; frac = v; }
+    else if (V.type === "simple") { v = e && e.v ? 1 : 0; frac = v; }
     else {
       v = e && typeof e.v === "number" ? e.v : 0;
-      frac = a.target ? Math.min(1, v / a.target) : (v > 0 ? 1 : 0);
+      frac = V.target ? Math.min(1, v / V.target) : (v > 0 ? 1 : 0);
     }
     return { kind: frac >= 1 ? "done" : frac > 0 ? "partial" : "open", v: v, frac: frac };
   }
 
   function flowTimeFor(a, dk, realOnly) {
-    if (a.time) return a.time;
+    var vt = flowVer(a, dk).time;
+    if (vt) return vt;
     if (a.link && a.link.kind === "salah") {
       if (dk === todayKey()) { var T = homeTimings(); if (T && T[a.link.key]) return T[a.link.key]; }
       if (realOnly) return null;
@@ -10679,20 +10867,126 @@
     return { items: items, counted: counted, done: done, total: counted.length, pct: pct, sum: sum, partial: partial };
   }
 
-  // Consecutive planned days completed (secondary info only; never shown for Salah).
-  function flowRun(a, dk) {
-    var n = 0, k = dk, guard = 0;
-    if (flowState(a, k).kind !== "done") k = fdAdd(k, -1);
-    while (guard++ < 60) {
-      if (!flowApplies(a, k)) { k = fdAdd(k, -1); if (k < a.startDate) break; continue; }
-      var s = flowState(a, k);
-      if (s.kind === "done") n++;
-      else if (s.kind === "skip" || s.kind === "rs") { /* set aside: neither breaks nor extends */ }
-      else break;
-      k = fdAdd(k, -1);
-      if (k < a.startDate) break;
+  // ---- history and consistency ----
+  // Every planned occurrence of one action, oldest first, up to today. Only real planned days appear:
+  // nothing before the start date, nothing in the future, and days the schedule skipped over (a Mon/Wed/Fri
+  // action has no Tuesday) simply aren't there. k: done | part | miss | open (today, not done yet) | skip | rs.
+  function flowHistory(a, days) {
+    var today = todayKey(), out = [], limit = days || 90;
+    for (var i = 0; i < limit; i++) {
+      var dk = fdAdd(today, -i);
+      if (dk < a.startDate) break;
+      if (!flowApplies(a, dk)) continue;
+      var s = flowState(a, dk);
+      out.push({ dk: dk, k: s.kind === "done" ? "done" : s.kind === "partial" ? "part" : s.kind === "skip" ? "skip" : s.kind === "rs" ? "rs" : (dk === today ? "open" : "miss") });
     }
-    return n;
+    return out.reverse();
+  }
+  // Consistency counts planned days only. Skipped/moved days are set aside (neither success nor failure),
+  // and today only counts once it has an outcome.
+  function flowConsistency(a) {
+    var judged = flowHistory(a, 90).filter(function (h) { return h.k === "done" || h.k === "part" || h.k === "miss"; });
+    var run = 0;
+    for (var i = judged.length - 1; i >= 0; i--) { if (judged[i].k === "done") run++; else break; }
+    var last = judged.slice(-5), lastDone = last.filter(function (h) { return h.k === "done"; }).length;
+    return { judged: judged.length, run: run, last: last.length, lastDone: lastDone };
+  }
+  // The one-line note on a Today row. Never for Salah; never a "streak" for worship — just the facts.
+  function flowConsistencyText(a, full) {
+    if (a.link && a.link.kind === "salah") return null;
+    var c = flowConsistency(a), worship = a.category === "deen" || a.category === "salah";
+    if (!worship && c.run >= 3) return c.run + " planned days in a row";
+    if (c.last >= 3 && (full || c.lastDone / c.last >= 0.6)) return "Done " + c.lastDone + " of the last " + c.last + " planned days";
+    return null;
+  }
+
+  // ---- what Hamdard is allowed to know about the Daily Flow ----
+  // Structured, factual, counts and names only, all computed from the records above; nothing is guessed.
+  // Every pattern carries a FACT (what the records show, with the number of planned days behind it) and,
+  // separately, an optional SUGGESTION (an idea, never stated as fact). A claim needs at least
+  // FLOW_PAT_MIN planned days of evidence; below that Hamdard is told there isn't enough history.
+  // Worship (Salah, Deen routines) is only ever counted — no patterns, no suggestions, no scoring.
+  var FLOW_PAT_DAYS = 14, FLOW_PAT_MIN = 3;
+  function flowIsWorship(a) { return a.category === "salah" || a.category === "deen" || !!(a.link && (a.link.kind === "salah" || a.link.kind === "sunnah")); }
+  function flowContext() {
+    var today = todayKey(), wkStart = fdAdd(today, -6), acts = flowActions();
+    var d = flowDay(today), ctx = { today: null, week: { planned: 0, done: 0, partial: 0, missed: 0, skipped: 0, moved: 0 }, actions: [], patterns: [], evidence: null };
+    ctx.today = {
+      planned: d.total, done: d.done, partial: d.partial,
+      skipped: d.items.filter(function (it) { return it.st.kind === "skip"; }).length,
+      moved: d.items.filter(function (it) { return it.st.kind === "rs"; }).length,
+      items: d.items.slice(0, 12).map(function (it) { var t = flowTimeFor(it.a, today, true); return { name: it.a.name, time: t ? flowClock(t) : null, state: it.st.kind }; })
+    };
+    var sections = {}, judgedTotal = 0, dayHas = {};
+    acts.forEach(function (a) {
+      if (a.archivedAt && a.archivedAt <= fdAdd(today, -FLOW_PAT_DAYS)) return;
+      var h = flowHistory(a, FLOW_PAT_DAYS);
+      if (!h.length) return;
+      var judged = h.filter(function (x) { return x.k === "done" || x.k === "part" || x.k === "miss"; });
+      var count = function (list, k) { return list.filter(function (x) { return x.k === k; }).length; };
+      var worship = flowIsWorship(a);
+      var rec = {
+        id: a.id, name: a.name, category: a.category, tag: a.tag || null, worship: worship,
+        time: a.time || null, timeLabel: a.time ? flowClock(a.time) : null, schedule: a.repeat && a.repeat.kind !== "once" ? flowRepeatText(a.repeat) : "one day",
+        tracking: a.type, startedOn: a.startDate, scheduleChanged: !!(a.vers && a.vers.length > 1),
+        window: { planned: judged.length, done: count(judged, "done"), partial: count(judged, "part"), missed: count(judged, "miss"), skipped: count(h, "skip"), moved: count(h, "rs") },
+        recent: judged.slice(-5).map(function (x) { return x.k === "done" ? "done" : x.k === "part" ? "partial" : "missed"; })
+      };
+      ctx.actions.push(rec);
+      judgedTotal += judged.length;
+      judged.forEach(function (x) { dayHas[x.dk] = true; });
+      h.forEach(function (x) {
+        if (x.dk < wkStart) return;
+        if (x.k === "done") { ctx.week.planned++; ctx.week.done++; } else if (x.k === "part") { ctx.week.planned++; ctx.week.partial++; }
+        else if (x.k === "miss") { ctx.week.planned++; ctx.week.missed++; } else if (x.k === "skip") ctx.week.skipped++; else if (x.k === "rs") ctx.week.moved++;
+      });
+      if (worship) return;
+
+      // timed actions feed the time-of-day comparison
+      if (a.time) judged.forEach(function (x) {
+        var s = flowSectionOf(a, x.dk), b = sections[s] || (sections[s] = { planned: 0, done: 0 });
+        b.planned++; if (x.k === "done") b.done++;
+      });
+
+      // missed on every one of the most recent planned days, all at the schedule that is in force now
+      var same = judged.filter(function (x) { return (flowVer(a, x.dk).time || null) === (a.time || null); }), n = 0;
+      for (var i = same.length - 1; i >= 0 && same[i].k === "miss"; i--) n++;
+      if (n >= FLOW_PAT_MIN) {
+        var late = a.time && flowMinOf(a.time) >= 17 * 60;
+        ctx.patterns.push({ kind: "missed-run", actionId: a.id, category: a.category, count: n, timeLabel: rec.timeLabel,
+          fact: (rec.timeLabel ? "“" + a.name + "” at " + rec.timeLabel : "“" + a.name + "”") + " has been missed on the last " + n + " planned days.",
+          suggestion: rec.timeLabel ? "Would you like to try " + (late ? "an earlier time" : "a different time") + "?" : (a.type !== "simple" && a.target ? "A smaller target might be easier to start with." : "If it isn't realistic right now, it can be moved or adjusted."),
+          canEdit: true });
+      }
+      if (rec.window.moved >= 3) {
+        ctx.patterns.push({ kind: "moved-often", actionId: a.id, category: a.category, count: rec.window.moved,
+          fact: "You've moved “" + a.name + "” " + rec.window.moved + " times in the last two weeks.", suggestion: "A different day or time might fit it better.", canEdit: true });
+      }
+      var last = judged.slice(-5), ld = count(last, "done");
+      if (last.length >= 4 && ld / last.length >= 0.75 && n < FLOW_PAT_MIN) {
+        ctx.patterns.push({ kind: "steady", actionId: a.id, category: a.category, count: ld,
+          fact: "You completed " + ld + " of your last " + last.length + " planned days of “" + a.name + "”.",
+          suggestion: rec.timeLabel && !rec.scheduleChanged ? "Keeping the same time (" + rec.timeLabel + ") may be working well." : null, canEdit: false });
+      }
+    });
+
+    // morning vs evening, only when both sides have real weight and the gap is large
+    var sk = Object.keys(sections).filter(function (s) { return sections[s].planned >= 6; });
+    if (sk.length >= 2) {
+      var rate = function (s) { return sections[s].done / sections[s].planned; };
+      sk.sort(function (x, y) { return rate(y) - rate(x); });
+      var hi = sk[0], lo = sk[sk.length - 1];
+      if (rate(hi) - rate(lo) >= 0.3) {
+        ctx.patterns.push({ kind: "time-of-day", category: null, count: sections[lo].planned,
+          fact: "Over the last two weeks, " + lo + " plans were completed " + sections[lo].done + " of " + sections[lo].planned + " times, and " + hi + " plans " + sections[hi].done + " of " + sections[hi].planned + ".",
+          suggestion: "If that keeps up, moving one " + lo + " plan to the " + hi + " could help.", canEdit: false });
+      }
+    }
+    var rank = { "missed-run": 0, "moved-often": 1, "time-of-day": 2, "steady": 3 };
+    ctx.patterns.sort(function (x, y) { return rank[x.kind] - rank[y.kind] || y.count - x.count; });
+    ctx.patterns = ctx.patterns.slice(0, 4);
+    ctx.evidence = { windowDays: FLOW_PAT_DAYS, judgedTotal: judgedTotal, judgedDays: Object.keys(dayHas).length, minimumPerClaim: FLOW_PAT_MIN, enough: judgedTotal >= 6 && Object.keys(dayHas).length >= 3 };
+    return ctx;
   }
 
   // ---- changing things ----
@@ -10745,11 +11039,11 @@
   }
 
   function flowToggle(a, dk) {
-    var st = flowState(a, dk), was = st.kind === "done";
+    var st = flowState(a, dk), was = st.kind === "done", V = flowVer(a, dk);
     if (a.link) flowLinkWrite(a, dk, !was);
-    else if (a.type === "simple") flowSetEntry(dk, a.id, was ? null : { v: 1 });
-    else if (a.type === "value" && !a.target && !was) { openFlowValueSheet(a, dk); return; }
-    else flowSetEntry(dk, a.id, was ? null : { v: a.target || 1 });
+    else if (V.type === "simple") flowSetEntry(dk, a.id, was ? null : { v: 1 });
+    else if (V.type === "value" && !V.target && !was) { openFlowValueSheet(a, dk); return; }
+    else flowSetEntry(dk, a.id, was ? null : { v: V.target || 1 });
     flowChanged(a, dk, was);
   }
   function flowSetValue(a, dk, v) {
@@ -10759,50 +11053,133 @@
   }
   function flowStep(a) { return a.type === "time" ? 5 : 1; }
 
-  function flowSetAside(a, dk, kind, to) {
-    flowSetEntry(dk, a.id, kind === "skip" ? { s: "skip" } : { s: "rs", to: to });
+  function flowSetAside(a, dk) {
+    flowSetEntry(dk, a.id, { s: "skip" });
     flowLinkCache = {};
     flowRender();
   }
+  // "Undo" on a skipped day, or on a day whose occurrence was moved away (which brings it back).
   function flowUndoAside(a, dk) {
-    var e = flowEntry(dk, a.id);
-    if (e && e.s === "rs" && e.to) { // take back the copy made for the new date
-      var acts = flowActions().filter(function (x) { return !(x.fromId === a.id && x.repeat && x.repeat.kind === "once" && x.repeat.date === e.to && !x.archivedAt); });
-      flowSaveActions(acts);
-    }
-    flowSetEntry(dk, a.id, null);
+    if (flowState(a, dk).kind === "rs") flowUnmove(a, dk);
+    else flowSetEntry(dk, a.id, null);
     flowRender();
   }
-  function flowReschedule(a, fromDk, toDk) {
-    var acts = flowActions();
-    var r = a.repeat || {};
-    if (r.kind === "once") {
-      acts.forEach(function (x) { if (x.id === a.id) { x.repeat = { kind: "once", date: toDk }; x.startDate = toDk; } });
-      flowSaveActions(acts);
-    } else {
-      acts.push({ id: uid("fa"), name: a.name, type: a.type, category: a.category, time: a.time || null, target: a.target || null, unit: a.unit || "",
-        repeat: { kind: "once", date: toDk }, startDate: toDk, archivedAt: null, createdAt: new Date().toISOString(), fromId: a.id });
-      flowSaveActions(acts);
-      flowSetEntry(fromDk, a.id, { s: "rs", to: toDk });
-    }
+
+  // Move ONE occurrence to another day. The template is never copied: the move is a single exception
+  // keyed by the occurrence's original date, so moving it again (Mon -> Tue -> Wed) just updates that
+  // exception and there is still exactly one occurrence.
+  function flowMove(a, dk, toDk) {
+    if (toDk <= dk || toDk < todayKey()) return { ok: false, msg: "Pick a later day." };
+    if (flowApplies(a, toDk)) return { ok: false, msg: a.name + " is already planned on " + fdShort(toDk) + "." };
+    var origin = flowMovedInFrom(a, dk) || dk, acts = flowActions();
+    acts.forEach(function (x) { if (x.id === a.id) { x.ex = x.ex || {}; x.ex[origin] = { to: toDk }; } });
+    flowSaveActions(acts);
+    if (!a.link) flowSetEntry(dk, a.id, null); // whatever was logged on the day it left no longer belongs there
+    flowLinkCache = {};
     flowRender();
+    return { ok: true };
   }
+  function flowUnmove(a, origin) {
+    var e = a.ex && a.ex[origin];
+    if (!e) return;
+    var acts = flowActions(), fresh = null;
+    acts.forEach(function (x) { if (x.id === a.id) { delete x.ex[origin]; if (!Object.keys(x.ex).length) delete x.ex; fresh = x; } });
+    flowSaveActions(acts);
+    if (fresh && !fresh.link && !flowApplies(fresh, e.to)) flowSetEntry(e.to, a.id, null);
+    flowLinkCache = {};
+  }
+
   function flowDelete(a) {
     var acts = flowActions();
     acts.forEach(function (x) { if (x.id === a.id) x.archivedAt = todayKey(); });
     flowSaveActions(acts);
     flowRender();
   }
+  // fields.start lets a recurring action begin on a later day (e.g. tomorrow) instead of today.
   function flowAdd(fields) {
     var today = todayKey();
+    var repeat = fields.repeat || { kind: "once", date: today };
     var a = {
       id: uid("fa"), name: fields.name, type: fields.type || "simple", category: fields.category || "task", time: fields.time || null,
-      target: fields.target || null, unit: fields.unit || "", repeat: fields.repeat || { kind: "once", date: today },
-      startDate: (fields.repeat && fields.repeat.kind === "once") ? fields.repeat.date : today, archivedAt: null, createdAt: new Date().toISOString()
+      target: fields.target || null, unit: fields.unit || "", repeat: repeat,
+      startDate: repeat.kind === "once" ? repeat.date : (fields.start || today), archivedAt: null, createdAt: new Date().toISOString()
     };
+    if (fields.tag) a.tag = fields.tag;
     if (fields.link) a.link = fields.link;
     var acts = flowActions(); acts.push(a); flowSaveActions(acts);
     return a;
+  }
+  // Editing the name or kind is cosmetic and applies everywhere. Editing the SCHEDULE (days, time, type,
+  // target, unit) takes effect from today: the old schedule is kept as a version so earlier days are not
+  // rewritten (no invented misses, no vanishing ticks).
+  function flowApplyEdit(id, nm, category, next) {
+    var acts = flowActions(), today = todayKey();
+    acts.forEach(function (x) {
+      if (x.id !== id) return;
+      if (x.category !== category) delete x.tag; // the filing tag only describes the kind it was made for
+      x.name = nm; x.category = category;
+      if (!next) return;
+      var cur = { type: x.type, target: x.target || null, unit: x.unit || "", time: x.time || null, repeat: x.repeat };
+      if (JSON.stringify(cur) === JSON.stringify(next)) return;
+      // if today already has an outcome (ticked, partly done, skipped, moved) it stays as it was:
+      // the new schedule then starts tomorrow instead of today
+      var eff = today;
+      if (flowApplies(x, today) && flowState(x, today).kind !== "open") eff = fdAdd(today, 1);
+      if (!x.vers) x.vers = [{ from: x.startDate, type: cur.type, target: cur.target, unit: cur.unit, time: cur.time, repeat: cur.repeat }];
+      var last = x.vers[x.vers.length - 1];
+      if (last.from >= eff) {
+        // nothing has happened under this schedule yet, so it can simply be corrected
+        x.vers[x.vers.length - 1] = { from: last.from, type: next.type, target: next.target, unit: next.unit, time: next.time, repeat: next.repeat };
+        if (x.vers.length === 1 && last.from > today) { // planned for a later day and still untouched: it may be re-dated
+          if (next.repeat.kind === "once") x.startDate = next.repeat.date;
+          x.vers[0].from = x.startDate;
+        }
+      } else {
+        x.vers.push({ from: eff, type: next.type, target: next.target, unit: next.unit, time: next.time, repeat: next.repeat });
+      }
+      x.type = next.type; x.target = next.target; x.unit = next.unit; x.time = next.time; x.repeat = next.repeat;
+    });
+    flowSaveActions(acts);
+  }
+
+  // One-time upgrade from the first Daily Flow build, which "moved" a recurring action by copying it into a
+  // one-off action and marking the original day with a log entry. That copy is what produced duplicate rows.
+  // Each such pair becomes a single exception on the original action; the copy is folded back into it.
+  function flowMigrate() {
+    if (readJSON("nc_flow_schema", 0) >= 2) return;
+    var acts = flowActions(), copies = acts.filter(function (x) { return x.fromId && x.repeat && x.repeat.kind === "once"; });
+    var claimed = {}, keys = [], i;
+    for (i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && /^nc_flow_log_\d{4}-\d{2}$/.test(k)) keys.push(k); }
+    keys.forEach(function (mk) {
+      var m = readJSON(mk, {}), dirty = false;
+      Object.keys(m).forEach(function (dk) {
+        Object.keys(m[dk]).forEach(function (id) {
+          var e = m[dk][id];
+          if (!e || e.s !== "rs") return;
+          var orig = acts.filter(function (x) { return x.id === id; })[0];
+          var copy = copies.filter(function (c) { return c.fromId === id && !claimed[c.id] && c.repeat.date === e.to; })[0] ||
+            copies.filter(function (c) { return c.fromId === id && !claimed[c.id]; })[0] || null;
+          var to = copy ? copy.repeat.date : e.to;
+          if (orig && to && to > dk) { orig.ex = orig.ex || {}; orig.ex[dk] = { to: to }; }
+          if (copy) {
+            claimed[copy.id] = true;
+            var same = flowMonthKey(to) === mk, cm = same ? m : readJSON(flowMonthKey(to), {});
+            var ce = (cm[to] || {})[copy.id];
+            if (ce) { // whatever was ticked on the moved copy belongs to the original occurrence
+              cm[to][id] = cm[to][id] || ce; delete cm[to][copy.id];
+              if (same) dirty = true; else writeJSON(flowMonthKey(to), cm);
+            }
+          }
+          delete m[dk][id]; dirty = true;
+        });
+        if (m[dk] && !Object.keys(m[dk]).length) delete m[dk];
+      });
+      if (dirty) writeJSON(mk, m);
+    });
+    acts = acts.filter(function (x) { return !claimed[x.id]; });
+    flowSaveActions(acts);
+    writeJSON("nc_flow_schema", 2);
+    flowLogCache = {};
   }
 
   // ---- rendering: shell ----
@@ -10840,9 +11217,13 @@
     if (flowTab === "week") renderFlowWeek(body); else renderFlowToday(body);
   }
   function flowRender() {
+    syncGoalPriority();
     var v = document.getElementById("view-flow");
     if (v && !v.classList.contains("hidden")) renderFlow();
-    if (document.getElementById("home-progress")) renderHomeProgress();
+    // the priority card and Home's progress both read the same Flow, so they refresh together
+    if (document.getElementById("priority-card-el")) renderTodaysPriority();
+    else if (document.getElementById("home-progress")) renderHomeProgress();
+    refreshHomeCompanion();
   }
 
   // ---- TODAY ----
@@ -10984,10 +11365,10 @@
     mid.appendChild(nameRow);
     var bits = [];
     var t = flowTimeFor(a, dk, true); if (t) bits.push(flowClock(t));
-    bits.push(flowKindInfo(a.category).label);
+    bits.push(a.tag || flowKindInfo(a.category).label);
     if (a.type !== "simple" && !a.link) bits.push(flowProgressText(a, st.v));
     else if (a.link && a.link.kind === "sunnah") { var tot = (ROUTINE_SECTIONS.filter(function (s) { return s.id === a.link.key; })[0] || { actions: [] }).actions.length; bits.push(st.v + " of " + tot + " done"); }
-    if (!(a.link && a.link.kind === "salah") && st.kind === "done") { var run = flowRun(a, dk); if (run >= 3) bits.push(run + " days in a row"); }
+    if (st.kind === "done") { var cons = flowConsistencyText(a, false); if (cons) bits.push(cons); } // only after it's ticked: a fact, never pressure
     mid.appendChild(hEl("p", "fl-meta", bits.join(" · ")));
 
     if (a.type !== "simple" && !a.link) {
@@ -11036,13 +11417,13 @@
   function flowBtn(label, cls, fn) { var b = hEl("button", cls, label); b.type = "button"; b.addEventListener("click", fn); return b; }
 
   function openFlowValueSheet(a, dk) {
-    var st = flowState(a, dk);
+    var st = flowState(a, dk), V = flowVer(a, dk); // the schedule that was in force on that day
     flowSheet(function (sheet) {
       flowSheetHead(sheet, a.name);
-      sheet.appendChild(hEl("p", "modal-sub", fdLong(dk) + (a.target ? " · target " + flowFmtValue(a, a.target) : "")));
-      var inp = hEl("input", "text-input"); inp.type = a.unit === "h" ? "text" : "number"; inp.inputMode = "decimal"; inp.step = "any"; inp.min = "0";
-      inp.placeholder = a.unit === "h" ? "e.g. 7:10 or 7.5" : (a.type === "time" ? "minutes" : (a.unit || "amount"));
-      inp.value = st.v ? (a.unit === "h" ? fnum(st.v) : String(st.v)) : "";
+      sheet.appendChild(hEl("p", "modal-sub", fdLong(dk) + (V.target ? " · target " + flowFmtValue(V, V.target) : "")));
+      var inp = hEl("input", "text-input"); inp.type = V.unit === "h" ? "text" : "number"; inp.inputMode = "decimal"; inp.step = "any"; inp.min = "0";
+      inp.placeholder = V.unit === "h" ? "e.g. 7:10 or 7.5" : (V.type === "time" ? "minutes" : (V.unit || "amount"));
+      inp.value = st.v ? (V.unit === "h" ? fnum(st.v) : String(st.v)) : "";
       sheet.appendChild(inp);
       var msg = hEl("p", "day-note", "");
       sheet.appendChild(flowBtn("Save", "btn btn-primary btn-full", function () {
@@ -11061,15 +11442,27 @@
       flowSheetHead(sheet, a.name);
       var recurring = a.repeat && a.repeat.kind !== "once";
       sheet.appendChild(hEl("p", "modal-sub", recurring ? "Repeats " + flowRepeatText(a.repeat) : "Just for " + fdShort(a.repeat.date)));
+      var cons = flowConsistencyText(a, true);
+      if (cons) sheet.appendChild(hEl("p", "modal-sub", cons + "."));
+      var from = flowMovedInFrom(a, dk);
+      if (from) sheet.appendChild(hEl("p", "modal-sub", "Moved here from " + fdShort(from) + "."));
+      var msg = hEl("p", "day-note", "");
+      var tryMove = function (to) {
+        var r = flowMove(a, dk, to);
+        if (r.ok) closeFlowSheet(); else msg.textContent = r.msg;
+      };
       sheet.appendChild(flowBtn("Edit", "btn btn-outline btn-full", function () { openFlowAddSheet(a); }));
-      sheet.appendChild(flowBtn("Skip today", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetAside(a, dk, "skip"); }));
-      sheet.appendChild(flowBtn("Move to tomorrow", "btn btn-outline btn-full", function () { closeFlowSheet(); flowReschedule(a, dk, fdAdd(dk, 1)); }));
-      var pick = hEl("input", "text-input"); pick.type = "date"; pick.min = fdAdd(dk, 1);
-      var pickRow = hEl("div", "fl-pickrow");
-      pickRow.appendChild(pick);
-      pickRow.appendChild(flowBtn("Move", "btn btn-outline", function () { if (!pick.value || pick.value <= dk) return; closeFlowSheet(); flowReschedule(a, dk, pick.value); }));
-      sheet.appendChild(pickRow);
+      sheet.appendChild(flowBtn("Skip today", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetAside(a, dk); }));
+      if (!(a.link && a.link.kind === "salah")) { // a prayer can't be "moved" to another day
+        sheet.appendChild(flowBtn("Move to tomorrow", "btn btn-outline btn-full", function () { tryMove(fdAdd(dk, 1)); }));
+        var pick = hEl("input", "text-input"); pick.type = "date"; pick.min = fdAdd(dk, 1);
+        var pickRow = hEl("div", "fl-pickrow");
+        pickRow.appendChild(pick);
+        pickRow.appendChild(flowBtn("Move", "btn btn-outline", function () { if (!pick.value || pick.value <= dk) { msg.textContent = "Pick a later day."; return; } tryMove(pick.value); }));
+        sheet.appendChild(pickRow);
+      }
       sheet.appendChild(flowBtn(recurring ? "Stop repeating (keep history)" : "Remove", "btn btn-outline btn-full btn-danger", function () { closeFlowSheet(); flowDelete(a); }));
+      sheet.appendChild(msg);
     });
   }
   function flowRepeatText(r) {
@@ -11079,10 +11472,48 @@
     return "once";
   }
 
-  function openFlowAddSheet(edit) {
+  // ---- naming a goal ----
+  // NURA may FILE a goal (kind + a short tag) and notice a measure in its name ("20 pages", "30 minutes"),
+  // but only as visible, editable suggestions. Classification is metadata for organisation: it never
+  // launches a tool and never changes what the user asked for. Nothing matched = nothing guessed.
+  var FLOW_CLASSIFY = [
+    { re: /\b(qur'?an|koran|dua|du'?a|adhkar|azkar|zikr|dhikr|tasbih|tahajjud|nafl|istighfar|durood|salawat|sadaqah?)\b/i, category: "deen", tag: "Deen" },
+    { re: /\b(gym|workout|work out|exercise|walk|walking|run|running|jog|jogging|yoga|push-?ups?|swim|swimming|cycling|cardio|stretch|stretching)\b/i, category: "fitness", tag: "Fitness" },
+    { re: /\b(sleep|bedtime|go to bed|wake ?up|nap)\b/i, category: "sleep", tag: "Sleep" },
+    { re: /\b(study|studying|revise|revision|homework|assignment|exam|chapter|practice questions|mock test|lecture notes|syllabus)\b/i, category: "study", tag: "Study" },
+    { re: /\b(school|college|university|class|classes|tuition|coaching|lecture)\b/i, category: "personal", tag: "Routine · Education" },
+    { re: /\b(office|job|shift|commute|work)\b/i, category: "personal", tag: "Routine · Work" },
+    { re: /\b(water|drink|hydrate|medicine|vitamins?|breakfast|lunch|dinner|meal)\b/i, category: "personal", tag: "Health" },
+    { re: /\b(read|reading|book|pages?)\b/i, category: "personal", tag: "Reading" }
+  ];
+  function flowClassify(name) {
+    for (var i = 0; i < FLOW_CLASSIFY.length; i++) { if (FLOW_CLASSIFY[i].re.test(name)) return { category: FLOW_CLASSIFY[i].category, tag: FLOW_CLASSIFY[i].tag }; }
+    return { category: null, tag: null };
+  }
+  var FLOW_UNITS = [
+    [/^(minutes?|mins?)$/i, "time", "min", 1], [/^(hours?|hrs?)$/i, "time", "min", 60],
+    [/^pages?$/i, "count", "pages", 1], [/^(litres?|liters?|ltrs?|l)$/i, "quantity", "L", 1], [/^glass(es)?$/i, "quantity", "glasses", 1],
+    [/^cups?$/i, "quantity", "cups", 1], [/^(km|kilomet(re|er)s?)$/i, "quantity", "km", 1], [/^steps$/i, "count", "steps", 1],
+    [/^questions?$/i, "quantity", "questions", 1], [/^(rakah|rakat|rak'?ahs?)$/i, "count", "rakah", 1], [/^chapters?$/i, "count", "chapters", 1],
+    [/^(reps?|times)$/i, "count", "reps", 1]
+  ];
+  function flowGuessMeasure(name) {
+    var re = /(\d+(?:\.\d+)?)\s*([a-z']+)/gi, m;
+    while ((m = re.exec(String(name)))) {
+      for (var i = 0; i < FLOW_UNITS.length; i++) {
+        if (FLOW_UNITS[i][0].test(m[2])) return { type: FLOW_UNITS[i][1], unit: FLOW_UNITS[i][2], target: Number(m[1]) * FLOW_UNITS[i][3], text: m[0] };
+      }
+    }
+    return null;
+  }
+
+  function openFlowAddSheet(edit, opts) {
+    opts = opts || {};
+    var goalMode = !!opts.goal && !edit;
     flowSheet(function (sheet) {
-      flowSheetHead(sheet, edit ? "Edit action" : "Add to today");
-      if (!edit) {
+      flowSheetHead(sheet, edit ? "Edit action" : goalMode ? "Create your goal" : "Add to today");
+      if (goalMode) sheet.appendChild(hEl("p", "modal-sub", "Just what's needed. You can change any of it later."));
+      if (!edit && !goalMode) {
         var sug = flowSuggestions();
         if (sug.length) {
           sheet.appendChild(hEl("p", "fl-form-label", "From NURA"));
@@ -11092,101 +11523,184 @@
           sheet.appendChild(hEl("p", "fl-form-label", "Or write your own"));
         }
       }
-      var f = { name: edit ? edit.name : "", category: edit ? edit.category : "task", type: edit ? edit.type : "simple", target: edit ? edit.target : null,
-        unit: edit ? edit.unit : "", time: edit ? edit.time : "", rk: edit ? edit.repeat.kind : "once", days: edit && edit.repeat.days ? edit.repeat.days.slice() : [], date: edit && edit.repeat.date ? edit.repeat.date : todayKey() };
+      var f = { name: edit ? edit.name : (opts.name || ""), category: edit ? edit.category : "task", type: edit ? edit.type : "simple", target: edit ? edit.target : null,
+        unit: edit ? edit.unit : "", time: edit ? edit.time : "", rk: edit ? edit.repeat.kind : "once", days: edit && edit.repeat.days ? edit.repeat.days.slice() : [], date: edit && edit.repeat.date ? edit.repeat.date : todayKey(),
+        kindTouched: !!edit, typeTouched: !!edit, autoMeasure: false };
       var locked = !!(edit && edit.link);
 
-      var name = hEl("input", "text-input"); name.type = "text"; name.maxLength = 60; name.placeholder = "e.g. Complete Economics Chapter 3"; name.value = f.name;
+      var name = hEl("input", "text-input"); name.type = "text"; name.maxLength = 60; name.placeholder = "e.g. Going to school, Read 20 pages, Gym"; name.value = f.name;
       sheet.appendChild(name);
+      var hint = hEl("p", "fl-hint hidden", "");
+      sheet.appendChild(hint);
 
       sheet.appendChild(hEl("p", "fl-form-label", "Kind"));
-      var kinds = hEl("div", "fl-chips");
+      var kinds = hEl("div", "fl-chips"), kindBtns = {};
       FLOW_KINDS.filter(function (k) { return k.k !== "salah" || f.category === "salah"; }).forEach(function (k) {
         var c = hEl("button", "fl-chip" + (f.category === k.k ? " is-on" : ""), k.icon + " " + k.label); c.type = "button";
-        c.addEventListener("click", function () { f.category = k.k; kinds.querySelectorAll(".fl-chip").forEach(function (x) { x.classList.remove("is-on"); }); c.classList.add("is-on"); });
-        kinds.appendChild(c);
+        c.addEventListener("click", function () { f.kindTouched = true; setKind(k.k); refreshHint(); });
+        kindBtns[k.k] = c; kinds.appendChild(c);
       });
       sheet.appendChild(kinds);
+      function setKind(k) {
+        f.category = k;
+        Object.keys(kindBtns).forEach(function (x) { kindBtns[x].classList.toggle("is-on", x === k); });
+      }
 
-      var typeBox = hEl("div", "fl-typebox");
+      var typeBox = hEl("div", "fl-typebox"), sel = null, tgt = null, unit = null, syncType = function () {};
       if (!locked) {
         sheet.appendChild(hEl("p", "fl-form-label", "How do you track it?"));
-        var sel = hEl("select", "text-input");
+        sel = hEl("select", "text-input");
         FLOW_TYPES.forEach(function (t) { var o = hEl("option", "", t.label); o.value = t.k; if (t.k === f.type) o.selected = true; sel.appendChild(o); });
         sheet.appendChild(sel);
-        var tgt = hEl("input", "text-input"); tgt.type = "number"; tgt.min = "0"; tgt.step = "any"; tgt.inputMode = "decimal"; tgt.value = f.target || "";
-        var unit = hEl("input", "text-input"); unit.type = "text"; unit.maxLength = 14; unit.value = f.unit || "";
+        tgt = hEl("input", "text-input"); tgt.type = "number"; tgt.min = "0"; tgt.step = "any"; tgt.inputMode = "decimal"; tgt.value = f.target || "";
+        unit = hEl("input", "text-input"); unit.type = "text"; unit.maxLength = 14; unit.value = f.unit || "";
         typeBox.appendChild(tgt); typeBox.appendChild(unit);
         sheet.appendChild(typeBox);
-        var sync = function () {
+        syncType = function () {
           f.type = sel.value;
           typeBox.classList.toggle("hidden", f.type === "simple");
           tgt.placeholder = f.type === "time" ? "Target minutes (e.g. 45)" : f.type === "value" ? "Target (optional, e.g. 7)" : "Target (e.g. 5)";
           unit.classList.toggle("hidden", f.type === "time");
-          unit.placeholder = f.type === "value" ? "Unit (h for hours, or your own)" : "Unit (e.g. pages, questions)";
+          unit.placeholder = f.type === "value" ? "Unit (h for hours, or your own)" : "Unit (e.g. pages, litres)";
         };
-        sel.addEventListener("change", sync); sync();
-        f._tgt = tgt; f._unit = unit;
+        sel.addEventListener("change", function () { f.typeTouched = true; f.autoMeasure = false; syncType(); refreshHint(); });
+        tgt.addEventListener("input", function () { f.typeTouched = true; f.autoMeasure = false; refreshHint(); });
+        unit.addEventListener("input", function () { f.typeTouched = true; f.autoMeasure = false; refreshHint(); });
+        syncType();
       }
+
+      // what NURA noticed in the name, said out loud so nothing changes silently
+      function refreshHint() {
+        var bits = [];
+        if (!edit) {
+          var c = flowClassify(name.value);
+          var kl = flowKindInfo(f.category).label;
+          if (c.tag && !f.kindTouched) bits.push("Filed under " + (c.tag === kl ? kl : kl + " · " + c.tag) + ".");
+          if (f.autoMeasure && sel) bits.push("Read “" + f.autoMeasure + "” as a target — change it below if that's not what you meant.");
+        }
+        hint.textContent = bits.join(" ");
+        hint.classList.toggle("hidden", !bits.length);
+      }
+      function onName() {
+        if (edit) return;
+        var c = flowClassify(name.value);
+        if (!f.kindTouched) setKind(c.category && kindBtns[c.category] ? c.category : "task");
+        if (sel && !f.typeTouched) {
+          var g = flowGuessMeasure(name.value);
+          if (g) { sel.value = g.type; tgt.value = String(g.target); unit.value = g.unit; f.autoMeasure = g.text; }
+          else { sel.value = "simple"; tgt.value = ""; unit.value = ""; f.autoMeasure = false; }
+          syncType();
+        }
+        refreshHint();
+      }
+      name.addEventListener("input", onName);
 
       sheet.appendChild(hEl("p", "fl-form-label", "Time (optional)"));
       var time = hEl("input", "text-input"); time.type = "time"; time.value = f.time || "";
       sheet.appendChild(time);
 
-      var repBox = hEl("div", "");
+      var rep = null, dayRow = null, dateIn = null;
       if (!locked || !edit) {
         sheet.appendChild(hEl("p", "fl-form-label", "Repeat"));
-        var rep = hEl("select", "text-input");
-        [["once", "Today only"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["days", "Choose days"]].forEach(function (r) { var o = hEl("option", "", r[1]); o.value = r[0]; if (r[0] === f.rk) o.selected = true; rep.appendChild(o); });
+        rep = hEl("select", "text-input");
+        [["once", "One day (pick the date)"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["days", "Choose days"]].forEach(function (r) { var o = hEl("option", "", r[1]); o.value = r[0]; if (r[0] === f.rk) o.selected = true; rep.appendChild(o); });
         sheet.appendChild(rep);
-        var dayRow = hEl("div", "fl-chips");
+        dayRow = hEl("div", "fl-chips");
         FD_LETTERS.forEach(function (l, i) {
           var c = hEl("button", "fl-chip fl-day" + (f.days.indexOf(i) !== -1 ? " is-on" : ""), l); c.type = "button"; c.setAttribute("aria-label", FD_DAYS[i]);
           c.addEventListener("click", function () { var ix = f.days.indexOf(i); if (ix === -1) f.days.push(i); else f.days.splice(ix, 1); c.classList.toggle("is-on"); });
           dayRow.appendChild(c);
         });
         sheet.appendChild(dayRow);
-        var dateIn = hEl("input", "text-input"); dateIn.type = "date"; dateIn.min = todayKey(); dateIn.value = f.date;
+        dateIn = hEl("input", "text-input"); dateIn.type = "date"; dateIn.min = todayKey(); dateIn.value = f.date;
         sheet.appendChild(dateIn);
         var repSync = function () { f.rk = rep.value; dayRow.classList.toggle("hidden", f.rk !== "days"); dateIn.classList.toggle("hidden", f.rk !== "once"); };
         rep.addEventListener("change", repSync); repSync();
-        f._rep = rep; f._date = dateIn;
       }
 
       var msg = hEl("p", "day-note", "");
-      sheet.appendChild(flowBtn(edit ? "Save" : "Add", "btn btn-primary btn-full fl-sticky", function () {
+      sheet.appendChild(flowBtn(edit ? "Save" : goalMode ? "Finish" : "Add", "btn btn-primary btn-full fl-sticky", function () {
         var nm = name.value.trim();
         if (!nm) { msg.textContent = "Give it a name."; return; }
         var target = null, unitV = "";
         if (!locked && f.type !== "simple") {
-          target = Number(f._tgt.value) || null;
+          target = Number(tgt.value) || null;
           if (f.type !== "value" && !(target > 0)) { msg.textContent = "Set a target so progress can be measured."; return; }
-          unitV = f.type === "time" ? "min" : f._unit.value.trim();
+          unitV = f.type === "time" ? "min" : unit.value.trim();
         }
         var repeat = null;
-        if (f._rep) {
-          if (f.rk === "once") { if (f._date.value < todayKey()) { msg.textContent = "Pick today or a later date."; return; } repeat = { kind: "once", date: f._date.value || todayKey() }; }
+        if (rep) {
+          if (f.rk === "once") { if (dateIn.value < todayKey()) { msg.textContent = "Pick today or a later date."; return; } repeat = { kind: "once", date: dateIn.value || todayKey() }; }
           else if (f.rk === "days") { if (!f.days.length) { msg.textContent = "Choose at least one day."; return; } repeat = { kind: "days", days: f.days.slice().sort() }; }
           else repeat = { kind: f.rk };
         }
         if (edit) {
-          var acts = flowActions();
-          acts.forEach(function (x) {
-            if (x.id !== edit.id) return;
-            x.name = nm; x.category = f.category; x.time = time.value || null;
-            if (!locked) { x.type = f.type; x.target = target; x.unit = unitV; }
-            if (repeat) { x.repeat = repeat; }
+          flowApplyEdit(edit.id, nm, f.category, {
+            type: locked ? edit.type : f.type, target: locked ? (edit.target || null) : target, unit: locked ? (edit.unit || "") : unitV,
+            time: time.value || null, repeat: repeat || edit.repeat
           });
-          flowSaveActions(acts);
-        } else {
-          flowAdd({ name: nm, category: f.category, type: f.type, target: target, unit: unitV, time: time.value || null, repeat: repeat });
+          closeFlowSheet(); flowRender();
+          return;
         }
+        var cls = flowClassify(nm);
+        var a = flowAdd({ name: nm, category: f.category, type: f.type, target: target, unit: unitV, time: time.value || null, repeat: repeat, tag: cls.category === f.category ? cls.tag : null });
+        if (opts.onCreated) opts.onCreated(a);
+        if (goalMode) { flowRender(); flowGoalSaved(a); return; }
         closeFlowSheet(); flowRender();
       }));
       if (edit) sheet.appendChild(flowBtn("Cancel", "btn btn-outline btn-full", closeFlowSheet));
       sheet.appendChild(msg);
-      if (!edit) setTimeout(function () { name.focus(); }, 60);
+      if (!edit) { setTimeout(function () { name.focus(); }, 60); onName(); }
     });
+  }
+
+  // ---- after "Finish": say exactly what was saved, offer at most ONE optional next step ----
+  function flowFirstDay(a) {
+    var today = todayKey();
+    for (var i = 0; i < 14; i++) { var dk = fdAdd(today, i); if (flowApplies(a, dk)) return dk; }
+    return null;
+  }
+  function flowGoalWhen(a) {
+    var today = todayKey(), first = flowFirstDay(a), at = a.time ? flowClock(a.time) : null;
+    var part = a.time ? ({ morning: "morning", afternoon: "afternoon", evening: "evening", night: "night" }[flowSectionOf(a, first || today)] || "") : "";
+    if (a.repeat.kind === "once") {
+      if (a.repeat.date === today) return "Added to today" + (at ? " · " + at : "") + ".";
+      if (a.repeat.date === fdAdd(today, 1)) return "Added to tomorrow" + (part ? " " + part : "") + (at ? " · " + at : "") + ".";
+      return "Added for " + fdLong(a.repeat.date) + (at ? " · " + at : "") + ".";
+    }
+    var s = "Repeats " + flowRepeatText(a.repeat) + (at ? " · " + at : "") + ". ";
+    return s + (first === today ? "Today is included." : first ? "First day: " + fdLong(first) + "." : "");
+  }
+  function flowGoalSaved(a) {
+    var sheet = document.getElementById("modal-flow-sheet"), today = todayKey();
+    sheet.innerHTML = "";
+    flowSheetHead(sheet, "Goal saved");
+    sheet.appendChild(hEl("p", "fl-saved-name", a.name));
+    sheet.appendChild(hEl("p", "modal-sub", flowGoalWhen(a)));
+    sheet.appendChild(hEl("p", "modal-sub", flowApplies(a, today)
+      ? "It's in today's Daily Flow. Tick it there or on Home — it counts in today's progress and the Life Grid."
+      : "It will appear in Daily Flow on its first day, and count in the Life Grid from then."));
+    // one optional idea, only where it plainly makes sense; never applied unless asked
+    var idea = null;
+    if (a.repeat.kind === "once") {
+      if (/^Routine/.test(a.tag || "")) idea = { text: "Would you like this to repeat Monday–Friday?", label: "Repeat Mon–Fri", repeat: { kind: "weekdays" }, done: "Now repeats Monday to Friday." };
+      else if (a.category === "deen" || a.category === "sleep") idea = { text: "Would you like this to repeat every day?", label: "Repeat every day", repeat: { kind: "daily" }, done: "Now repeats every day." };
+    }
+    var ideaBox = hEl("div", "fl-idea");
+    if (idea) {
+      ideaBox.appendChild(hEl("p", "fl-idea-text", idea.text));
+      var row = hEl("div", "fl-idea-row");
+      row.appendChild(flowBtn(idea.label, "btn btn-outline", function () {
+        flowApplyEdit(a.id, a.name, a.category, { type: a.type, target: a.target || null, unit: a.unit || "", time: a.time || null, repeat: idea.repeat });
+        flowRender();
+        ideaBox.innerHTML = ""; ideaBox.appendChild(hEl("p", "fl-idea-text", idea.done));
+      }));
+      row.appendChild(flowBtn("Not now", "btn btn-outline", function () { ideaBox.remove(); }));
+      ideaBox.appendChild(row);
+    }
+    if (idea) sheet.appendChild(ideaBox);
+    sheet.appendChild(flowBtn("Done", "btn btn-primary btn-full", closeFlowSheet));
+    sheet.appendChild(flowBtn("Open Daily Flow", "btn btn-outline btn-full", function () { closeFlowSheet(); openFlow("today"); }));
   }
 
   // ---- WEEK: the Life Grid ----
@@ -11209,7 +11723,8 @@
       var cells = days.map(function (dk) { return flowCell(a, dk, today); });
       var planned = 0, done = 0;
       cells.forEach(function (c) { if (c.k === "done" || c.k === "part" || c.k === "open" || c.k === "miss") { planned++; if (c.k === "done") done++; } });
-      rows.push({ a: a, cells: cells, planned: planned, done: done, sort: a.time ? flowMinOf(a.time) : (a.link && a.link.kind === "salah" ? (SALAH_DEFAULT_MIN[a.link.key] || 720) : 1500) });
+      var firstDay = days.filter(function (dk) { return flowApplies(a, dk); })[0], vt = firstDay ? flowVer(a, firstDay).time : a.time;
+      rows.push({ a: a, cells: cells, planned: planned, done: done, sort: vt ? flowMinOf(vt) : (a.link && a.link.kind === "salah" ? (SALAH_DEFAULT_MIN[a.link.key] || 720) : 1500) });
     });
     rows.sort(function (x, y) { return x.sort - y.sort || (x.a.name < y.a.name ? -1 : 1); });
     var totalP = 0, totalD = 0, perDay = days.map(function () { return { p: 0, d: 0 }; });
@@ -11249,7 +11764,7 @@
     return lines.slice(0, 5);
   }
 
-  var FLOW_CELL_TEXT = { done: "✓", part: "◐", open: "○", miss: "·", skip: "–", rs: "↷", future: "", na: "" };
+  var FLOW_CELL_TEXT = { done: "✓", part: "◐", open: "○", miss: "·", skip: "⊘", rs: "↷", future: "", na: "—" };
   var FLOW_CELL_LABEL = { done: "completed", part: "partly done", open: "not done yet", miss: "not completed", skip: "skipped", rs: "moved to another day", future: "planned", na: "not planned" };
 
   function renderFlowWeek(body) {
@@ -11294,14 +11809,15 @@
         r.cells.forEach(function (c, i) {
           var dk = data.days[i];
           var cell = hEl("button", "fl-cell c-" + c.k + (dk === data.today ? " is-today" : "") + (flowPulseKey === r.a.id + "|" + dk ? " just" : ""), FLOW_CELL_TEXT[c.k]); cell.type = "button";
-          cell.setAttribute("aria-label", r.a.name + ", " + FD_DAYS[i] + " " + fdShort(dk) + ": " + FLOW_CELL_LABEL[c.k]);
+          var mvFrom = c.k !== "rs" && c.k !== "na" ? flowMovedInFrom(r.a, dk) : null;
+          cell.setAttribute("aria-label", r.a.name + ", " + FD_DAYS[i] + " " + fdShort(dk) + ": " + FLOW_CELL_LABEL[c.k] + (mvFrom ? " (moved here from " + fdShort(mvFrom) + ")" : "") + (c.k === "rs" ? " to " + fdShort(c.st.to) : ""));
           if (c.k === "na") cell.disabled = true;
           else cell.addEventListener("click", function () { openFlowCellSheet(r.a, dk); });
           grid.appendChild(cell);
         });
       });
       wrap.appendChild(grid); body.appendChild(wrap);
-      var legend = hEl("p", "fl-legend", "✓ done   ◐ partly   ○ not yet   · not completed   – skipped   ↷ moved");
+      var legend = hEl("p", "fl-legend", "✓ done   ◐ partly   ○ not yet   · not completed   ⊘ skipped   ↷ moved   — not planned");
       body.appendChild(legend);
     }
     flowReflectionCard(body, data);
@@ -11340,13 +11856,16 @@
       var st = flowState(a, dk);
       var label = st.kind === "done" ? "Completed" : st.kind === "partial" ? "Partly done" : st.kind === "skip" ? "Skipped" : st.kind === "rs" ? "Moved to " + fdShort(st.to) : dk > today ? "Planned" : "Not completed";
       sheet.appendChild(hEl("p", "fl-cell-state", label));
-      if (a.type !== "simple" && !a.link && dk <= today && st.kind !== "skip" && st.kind !== "rs") sheet.appendChild(hEl("p", "modal-sub", flowProgressText(a, st.v)));
+      var mvFrom = st.kind !== "rs" ? flowMovedInFrom(a, dk) : null;
+      if (mvFrom) sheet.appendChild(hEl("p", "modal-sub", "Moved here from " + fdShort(mvFrom) + "."));
+      var Vd = flowVer(a, dk);
+      if (Vd.type !== "simple" && !a.link && dk <= today && st.kind !== "skip" && st.kind !== "rs") sheet.appendChild(hEl("p", "modal-sub", flowProgressText(Vd, st.v)));
       if (dk > today) { sheet.appendChild(hEl("p", "modal-sub", "This day hasn't happened yet.")); return; }
       if (st.kind === "skip" || st.kind === "rs") { sheet.appendChild(flowBtn("Undo", "btn btn-outline btn-full", function () { closeFlowSheet(); flowUndoAside(a, dk); })); return; }
-      if (a.type === "simple" || a.link) {
+      if (Vd.type === "simple" || a.link) {
         sheet.appendChild(flowBtn(st.kind === "done" ? "Mark not done" : "Mark done", "btn btn-primary btn-full", function () { closeFlowSheet(); flowToggle(a, dk); }));
       } else {
-        sheet.appendChild(flowBtn(a.type === "value" ? "Log a value" : "Set progress", "btn btn-primary btn-full", function () { openFlowValueSheet(a, dk); }));
+        sheet.appendChild(flowBtn(Vd.type === "value" ? "Log a value" : "Set progress", "btn btn-primary btn-full", function () { openFlowValueSheet(a, dk); }));
         if (st.kind === "done" || st.kind === "partial") sheet.appendChild(flowBtn("Clear", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetValue(a, dk, 0); }));
       }
       sheet.appendChild(flowBtn("Skip this day", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetAside(a, dk, "skip"); }));
@@ -11361,6 +11880,7 @@
   }
 
   function initFlow() {
+    flowMigrate();
     document.getElementById("flow-back").addEventListener("click", function () { setActiveView("home"); });
     document.querySelectorAll(".fl-tab").forEach(function (b) {
       b.addEventListener("click", function () { flowTab = b.dataset.fltab; if (flowTab === "week") flowWeekStart = fdWeekStart(todayKey()); renderFlow(); });

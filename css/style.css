@@ -1229,3 +1229,14 @@ html.on-home, html.on-home body { background: #F7F4EC; }
 }
 .fl-cell.c-na.is-today { box-shadow: none; }
 .modal-sheet .fl-sticky { position: sticky; bottom: 0; z-index: 2; margin-top: 10px; box-shadow: 0 -12px 12px -4px var(--bg); }
+
+/* ---- custom goal: hint, saved confirmation, optional idea, priority card control ---- */
+.fl-hint { margin: -4px 0 10px; font-size: 12.5px; line-height: 1.45; color: #6A6244; }
+.fl-saved-name { margin: 0 0 4px; font-size: 20px; font-weight: 800; color: #174C3C; }
+.fl-idea { margin: 14px 0 12px; padding: 12px 14px; border-radius: 14px; background: rgba(201, 154, 61, 0.12); border: 1px solid rgba(201, 154, 61, 0.35); }
+.fl-idea-text { margin: 0 0 8px; font-size: 14px; line-height: 1.45; color: #2B372F; }
+.fl-idea-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.fl-idea-row .btn { min-height: 40px; }
+.pc-goal { margin-top: 4px; }
+.pc-goal .fl-stepper { margin: 0 0 10px; }
+.fl-cell.c-na { color: #BDB595; font-weight: 400; cursor: default; }
