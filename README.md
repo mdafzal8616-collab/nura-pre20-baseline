@@ -25,3 +25,14 @@ Only the Home screen was rebuilt (Sunnah, Duniya, AI Chat and More are unchanged
 - **Today's Progress:** completed / applicable actions — prayers whose time has arrived, today's priority, Plan My Day items, habits and Top 3 — with a per-group breakdown. The old 7-day graph was removed from Home; the report sheet is one tap away.
 - **Useful right now:** 3–4 tiles chosen by time of day and current state.
 - No new storage keys; existing saved data (name, prayer settings, priority, plan, habits) is read as before.
+
+## Daily Flow + Life Grid — 2026-09-26
+
+New screen, opened from Home's progress card (not a tab; the bottom nav is unchanged). Sunnah, Duniya, More, AI Chat and the Home layout are otherwise unchanged; Study Mission is not built.
+
+- **Today:** the user's own planned actions in time order (Morning / Afternoon / Evening / Night / Anytime), with NOW and NEXT markers, a checkbox per action, and a summary ("7 of 10 planned actions completed"). Simple ticks, counts (3 / 5 pages), time (32 / 45 min), quantity (18 / 30) and values (sleep 7h 10m) are all supported; measured actions contribute value/target to the percentage.
+- **Week (Life Grid):** task rows × Mon–Sun, one cell per day: done ✓, partial ◐, not yet ○, not completed ·, skipped –, moved ↷, planned (dotted), not planned (blank). Past days can be corrected by tapping the cell. Summary lines only appear when enough planned days exist; the end-of-week reflection is optional.
+- **Plan control:** add (name, kind, tracking type, time, repeat: today / every day / weekdays / chosen days), edit, skip today, move to tomorrow or a date, stop repeating (history kept). Suggestions ("Five daily prayers", adhkar routines, existing habits) are one tap and never added automatically.
+- **Linked actions** read and write NURA's existing Salah completions, Sunnah log and habit log instead of copying them, so ticking Fajr here and on Home is one fact.
+- **Storage:** `nc_flow_actions`, `nc_flow_log_YYYY-MM` (one shard per month), `nc_flow_miles`, `nc_flow_reflect`. Nothing existing was migrated.
+- **Home progress** now counts the Flow; automatic counting of elapsed prayers is only a fallback when there is no Flow plan for today.

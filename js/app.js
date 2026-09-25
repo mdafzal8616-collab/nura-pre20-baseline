@@ -946,30 +946,43 @@
   }
 
   // ---- today's progress: completed / applicable actions, equal weight, real data only ----
-  // Applicable = prayers whose time has arrived (only when prayer times are set up),
-  // today's priority (Salah Consistency is the prayers themselves, so it isn't counted twice),
-  // Plan My Day items that weren't skipped, the user's habits, and their Top 3 tasks.
+  // The user's Daily Flow is the primary source: every action they planned for today counts once
+  // (a measured action contributes value/target). Beyond that, NURA's own items still count unless
+  // the Flow already covers them: prayers whose time has arrived (only as a fallback when the Flow has
+  // nothing planned for today - the user decides what counts once they plan), today's priority, Plan My Day items, habits not already in the Flow,
+  // and Top 3 tasks. Skipped or rescheduled items are set aside, never counted against the user.
   function homeProgress() {
+    flowLinkCache = {};
     var items = [], now = new Date();
+    var fd = flowDay(todayKey());
+    var flowSalah = fd.items.some(function (it) { return it.a.link && it.a.link.kind === "salah"; });
+    var flowHabit = {};
+    fd.items.forEach(function (it) { if (it.a.link && it.a.link.kind === "habit") flowHabit[it.a.link.key] = true; });
+
     var T = homeTimings(), comps = getSalahCompletions();
-    if (T) PRAYER_ORDER.forEach(function (n) { if (parseTimeToday(T[n]) <= now) items.push({ g: "Salah", done: !!comps[n] }); });
+    if (T && !flowSalah && !fd.items.length) PRAYER_ORDER.forEach(function (n) { if (parseTimeToday(T[n]) <= now) items.push({ g: "Salah", done: !!comps[n] }); });
     var p = getCurrentPriority();
     if (p && p.date === todayKey() && p.kind !== "salah") items.push({ g: p.kind === "sleep" ? "Personal" : "Focus", done: p.status === "completed" });
     getPlanActivities().forEach(function (a) { if (a.status !== "skipped") items.push({ g: "Focus", done: a.status === "done" }); });
     var hl = getHabitLogToday();
-    getHabits().forEach(function (h) { items.push({ g: "Personal", done: hl[h.id] === "done" }); });
+    getHabits().forEach(function (h) { if (!flowHabit[h.id]) items.push({ g: "Personal", done: hl[h.id] === "done" }); });
     var t3 = getTop3(), d3 = getTop3Done();
     t3.forEach(function (t, i) { if (t && String(t).trim()) items.push({ g: "Focus", done: !!d3[i] }); });
-    var out = { done: 0, total: items.length, percent: null, groups: {} };
+    fd.counted.forEach(function (it) { items.push({ g: flowGroup(it.a), done: it.st.kind === "done", frac: it.st.frac }); });
+
+    var out = { done: 0, total: items.length, percent: null, groups: {}, partial: false };
+    var sum = 0;
     items.forEach(function (it) {
       var g = out.groups[it.g] || (out.groups[it.g] = { done: 0, total: 0 });
       g.total++;
-      if (it.done) { g.done++; out.done++; }
+      var f = it.frac !== undefined ? it.frac : (it.done ? 1 : 0);
+      sum += f;
+      if (it.done) { g.done++; out.done++; } else if (f > 0) out.partial = true;
     });
     if (out.total) {
-      var pct = Math.round((out.done / out.total) * 100);
+      var pct = Math.round((sum / out.total) * 100);
       if (out.done < out.total && pct >= 100) pct = 99;
-      if (out.done > 0 && pct < 1) pct = 1;
+      if (sum > 0 && pct < 1) pct = 1;
       out.percent = pct;
     }
     return out;
@@ -986,14 +999,13 @@
           '<span class="hp-pct" id="hp-pct">0%</span></div>' +
         '<div class="hp-text"><p class="hh-eyebrow">Today</p><p class="hp-main" id="hp-main"></p><p class="hp-sub" id="hp-sub"></p><div class="hp-chips" id="hp-chips"></div></div>' +
       '</div>' +
-      '<button type="button" class="hp-link" id="hp-link">View report ›</button>';
+      '<div class="hp-week hidden" id="hp-week" role="group" aria-label="This week"></div>' +
+      '<div class="hp-links"><button type="button" class="hp-link" id="hp-link">View today’s plan ›</button>' +
+      '<button type="button" class="hp-link hp-link-quiet" id="hp-report">Report</button></div>';
     document.getElementById("hp-ring-fill").style.strokeDasharray = HP_CIRC;
     document.getElementById("hp-ring-fill").style.strokeDashoffset = HP_CIRC;
-    document.getElementById("hp-link").addEventListener("click", function () {
-      var pr = homeProgress();
-      if (!pr.total) { startFirstAction(); return; }
-      openProgressDetails();
-    });
+    document.getElementById("hp-link").addEventListener("click", function () { openFlow("today"); });
+    document.getElementById("hp-report").addEventListener("click", function () { openProgressDetails(); });
   }
   function startFirstAction() {
     var p = getCurrentPriority();
@@ -1006,6 +1018,7 @@
     ensureProgressDom(host);
     var pr = homeProgress();
     var has = pr.total > 0;
+    var hasFlow = flowActions().some(function (a) { return !a.archivedAt; });
     host.classList.toggle("is-empty", !has);
     var pct = has ? pr.percent : 0;
     document.getElementById("hp-pct").textContent = has ? pct + "%" : "—";
@@ -1013,13 +1026,13 @@
       var f = document.getElementById("hp-ring-fill");
       if (f) f.style.strokeDashoffset = HP_CIRC * (1 - pct / 100);
     });
-    document.getElementById("hp-main").textContent = has ? pr.done + " of " + pr.total + " actions completed" : "Your day has just started.";
+    document.getElementById("hp-main").textContent = has ? pr.done + " of " + pr.total + " planned actions completed" : "Your day has just started.";
     document.getElementById("hp-sub").textContent = has
-      ? (pr.done === pr.total ? "Everything planned so far is done." : (pr.total - pr.done) + " to go")
-      : "Nothing to count yet — start with one small action.";
+      ? (pr.done === pr.total ? "Everything planned so far is done." : (pr.total - pr.done) + " remaining" + (pr.partial ? " · partial progress counts in proportion" : ""))
+      : "Nothing planned to count yet.";
     var chips = document.getElementById("hp-chips");
     chips.innerHTML = "";
-    ["Salah", "Focus", "Personal"].forEach(function (g) {
+    ["Salah", "Deen", "Focus", "Personal"].forEach(function (g) {
       var gg = pr.groups[g];
       if (!gg) return;
       var c = hEl("span", "hp-chip" + (gg.done === gg.total ? " is-full" : ""));
@@ -1027,7 +1040,23 @@
       c.appendChild(hEl("span", "hp-chip-count", gg.done + "/" + gg.total));
       chips.appendChild(c);
     });
-    document.getElementById("hp-link").textContent = has ? "View report ›" : "Start first action ›";
+    document.getElementById("hp-link").textContent = hasFlow ? "View today’s plan ›" : "Build today’s plan ›";
+
+    // a tiny look at the week, only once there's something planned
+    var wk = document.getElementById("hp-week");
+    wk.innerHTML = "";
+    wk.classList.toggle("hidden", !hasFlow);
+    if (hasFlow) {
+      flowWeekStrip().forEach(function (d) {
+        var lv = d.pct === null ? "lv-none" : d.pct >= 100 ? "lv-4" : d.pct >= 60 ? "lv-3" : d.pct >= 30 ? "lv-2" : d.pct > 0 ? "lv-1" : "lv-0";
+        var b = hEl("button", "hp-day " + lv + (d.isToday ? " is-today" : "") + (d.future ? " is-future" : "")); b.type = "button";
+        b.setAttribute("aria-label", fdLong(d.dk) + (d.pct === null ? ": nothing planned yet" : ": " + d.pct + "% of planned actions done"));
+        b.appendChild(hEl("span", "hp-day-dot", ""));
+        b.appendChild(hEl("span", "hp-day-l", d.letter));
+        b.addEventListener("click", function () { openFlow("week"); });
+        wk.appendChild(b);
+      });
+    }
   }
   // The timer calls this once a second; the calculation is cheap and reads saved data only.
   function renderProgressLine() { renderHomeProgress(); }
@@ -3744,21 +3773,26 @@
         return { habit: j.habit, name: rcName(j), currentStreak: s.current, bestStreak: s.best, weekClean: s.week.clean, weekSlips: s.week.slips, loggedToday: !!s.logs[todayKey()] };
       });
     },
-    phone: function () { return { nativeAvailable: !!window.NuraNative }; }
+    phone: function () { return { nativeAvailable: !!window.NuraNative }; },
+    flow: function () {
+      var d = flowDay(todayKey()), start = fdWeekStart(todayKey()), wk = flowWeekData(start);
+      return { todayDone: d.done, todayPlanned: d.total, weekDone: wk.totalD, weekPlanned: wk.totalP,
+        perAction: wk.rows.filter(function (r) { return r.planned >= 3; }).slice(0, 6).map(function (r) { return { name: r.a.name, plannedDays: r.planned, doneDays: r.done }; }) };
+    }
   };
 
   var NC_TOPICS = {
-    day: ["profile", "now", "salah", "plan", "priority", "progress", "habits"],
+    day: ["profile", "now", "salah", "plan", "priority", "progress", "habits", "flow"],
     routine: ["profile", "now", "salah", "plan", "priority", "habits"],
     study: ["profile", "now", "salah", "plan", "priority", "study"],
     sleep: ["profile", "now", "salah", "sleep"],
     fitness: ["profile", "now", "priority", "fitness"],
-    progress: ["profile", "now", "progress", "study", "fitness", "habits"],
+    progress: ["profile", "now", "progress", "study", "fitness", "habits", "flow"],
     recovery: ["profile", "now", "recovery"],
     phone: ["profile", "now", "phone"],
     general: ["profile", "now", "salah", "priority"]
   };
-  var NC_LABELS = { salah: "today's Salah", plan: "your plan for today", priority: "today's priority", study: "study history", sleep: "sleep", fitness: "fitness", habits: "habits", progress: "your progress", recovery: "your recovery counts (numbers only)", phone: "phone control availability" };
+  var NC_LABELS = { salah: "today's Salah", plan: "your plan for today", priority: "today's priority", study: "study history", sleep: "sleep", fitness: "fitness", habits: "habits", progress: "your progress", recovery: "your recovery counts (numbers only)", phone: "phone control availability", flow: "your Daily Flow (counts only)" };
 
   function buildNuraContext(topic) {
     var names = NC_TOPICS[topic] || NC_TOPICS.general;
@@ -4222,12 +4256,13 @@
     document.querySelectorAll(".view").forEach(function (v) {
       v.classList.toggle("hidden", v.dataset.view !== name);
     });
-    document.documentElement.classList.toggle("on-home", name === "home");
-    var navHighlight = name.indexOf("duniya") === 0 ? "duniya" : name === "memory" ? "more" : name;
+    document.documentElement.classList.toggle("on-home", name === "home" || name === "flow");
+    var navHighlight = name.indexOf("duniya") === 0 ? "duniya" : name === "memory" ? "more" : name === "flow" ? "home" : name;
     document.querySelectorAll(".nav-btn[data-nav]").forEach(function (btn) {
       btn.classList.toggle("active", btn.dataset.nav === navHighlight);
     });
     if (name === "home") { mountPriorityCard("priority-card-home-slot"); renderHome(); }
+    if (name === "flow") { renderFlow(); window.scrollTo(0, 0); }
     if (name === "duniya-tool") { mountPriorityCard("priority-card-duniya-slot"); renderTodaysPriority(); }
     if (name === "sunnah") { renderRoutine(); renderAkhlaq(); renderVerseOfDay(); renderHadithList(); renderDuaCategories(); }
     if (name === "chat") renderChatOptions();
@@ -10473,6 +10508,866 @@
     });
   }
 
+  // ===================================================================
+  // DAILY FLOW + LIFE GRID (2026-09-26)
+  //
+  // The paper method, made durable: the user writes what they plan to do,
+  // ticks it as it happens, and the ticks accumulate into a weekly grid.
+  //
+  //   nc_flow_actions          [DailyAction]  what the user planned (their choice only)
+  //   nc_flow_log_YYYY-MM      {date:{actionId:{v}|{s:"skip"}|{s:"rs",to}}}  one shard per month,
+  //                            so opening a week never reads more than two small blobs
+  //   nc_flow_miles            {date:{key:1}}  milestones already shown (never repeated)
+  //   nc_flow_reflect          {weekStart:"easy|balanced|difficult"}
+  //
+  // DailyAction { id, name, type: simple|count|time|quantity|value, category, time:"HH:MM"|null,
+  //   target:number|null, unit:string, repeat:{kind:once|daily|weekdays|days, date?, days?[Mon=0]},
+  //   startDate, archivedAt|null, createdAt, link?:{kind:salah|sunnah|habit, key}, fromId? }
+  //
+  // A `link` makes an action read/write the data NURA already keeps (Salah completions, Sunnah log,
+  // habit log) instead of duplicating it — ticking Fajr here and on Home are the same fact.
+  // Later systems (Study Mission, Recovery, Money…) plug in by creating actions with their own
+  // `source`/`link` kinds; nothing here is specific to them.
+  //
+  // Progress is completion of planned actions and nothing else: each applicable action counts once;
+  // a measured action contributes value/target (capped at 1). Skipped or rescheduled actions are set
+  // aside, not counted against the user. No score, no moral rating.
+  // ===================================================================
+
+  var FLOW_KEY = "nc_flow_actions", FLOW_MILES = "nc_flow_miles", FLOW_REFLECT = "nc_flow_reflect";
+  var flowTab = "today", flowWeekStart = null, flowPulseId = null, flowNoteTimer = null;
+  var flowLogCache = {}, flowLinkCache = {}, flowPulseKey = null;
+
+  var FLOW_KINDS = [
+    { k: "task", label: "Task", icon: "✅" }, { k: "study", label: "Study", icon: "📚" }, { k: "deen", label: "Deen", icon: "🤲" },
+    { k: "fitness", label: "Fitness", icon: "🏋️" }, { k: "sleep", label: "Sleep", icon: "😴" }, { k: "personal", label: "Personal", icon: "⭐" },
+    { k: "salah", label: "Salah", icon: "🕌" }, { k: "habit", label: "Habit", icon: "🌱" }
+  ];
+  var FLOW_TYPES = [
+    { k: "simple", label: "Simple tick" }, { k: "count", label: "Count (pages, rakah…)" }, { k: "time", label: "Time (minutes)" },
+    { k: "quantity", label: "Quantity (questions…)" }, { k: "value", label: "Value (e.g. sleep hours)" }
+  ];
+  var FLOW_SECTIONS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["night", "Night"], ["any", "Anytime today"]];
+  var FD_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  var FD_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
+  var SALAH_DEFAULT_MIN = { Fajr: 330, Dhuhr: 780, Asr: 990, Maghrib: 1110, Isha: 1200 };
+
+  // ---- dates (local, Monday = 0) ----
+  function fdParse(k) { var p = k.split("-"); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0); }
+  function fdAdd(k, n) { var d = fdParse(k); d.setDate(d.getDate() + n); return todayKey(d); }
+  function fdDow(k) { return (fdParse(k).getDay() + 6) % 7; }
+  function fdWeekStart(k) { return fdAdd(k, -fdDow(k)); }
+  function fdShort(k) { return fdParse(k).toLocaleDateString(undefined, { day: "numeric", month: "short" }); }
+  function fdLong(k) { return fdParse(k).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }); }
+  function fnum(x) { return String(Math.round(x * 100) / 100); }
+
+  // ---- storage ----
+  function flowActions() { var a = readJSON(FLOW_KEY, []); return Array.isArray(a) ? a : []; }
+  function flowSaveActions(a) { writeJSON(FLOW_KEY, a); }
+  function flowMonthKey(dk) { return "nc_flow_log_" + dk.slice(0, 7); }
+  function flowMonth(dk) { var k = flowMonthKey(dk); if (!flowLogCache[k]) flowLogCache[k] = readJSON(k, {}); return flowLogCache[k]; }
+  function flowEntry(dk, id) { return (flowMonth(dk)[dk] || {})[id] || null; }
+  function flowSetEntry(dk, id, entry) {
+    var m = flowMonth(dk), d = m[dk] || (m[dk] = {});
+    if (entry) d[id] = entry; else delete d[id];
+    if (!Object.keys(d).length) delete m[dk];
+    writeJSON(flowMonthKey(dk), m);
+  }
+  function lc(key) { return flowLinkCache[key] || (flowLinkCache[key] = readJSON(key, {})); }
+  function flowActionById(id) { return flowActions().filter(function (a) { return a.id === id; })[0] || null; }
+
+  function flowKindInfo(k) { return FLOW_KINDS.filter(function (x) { return x.k === k; })[0] || FLOW_KINDS[0]; }
+  function flowGroup(a) {
+    return a.category === "salah" ? "Salah" : a.category === "deen" ? "Deen" : (a.category === "study" || a.category === "task" || a.category === "fitness") ? "Focus" : "Personal";
+  }
+
+  // ---- when does an action apply? ----
+  function flowApplies(a, dk) {
+    if (a.archivedAt && dk >= a.archivedAt) return false;
+    if (dk < a.startDate) return false;
+    var r = a.repeat || { kind: "once" };
+    if (r.kind === "once") return r.date === dk;
+    if (r.kind === "daily") return true;
+    var dow = fdDow(dk);
+    if (r.kind === "weekdays") return dow <= 4;
+    if (r.kind === "days") return (r.days || []).indexOf(dow) !== -1;
+    return false;
+  }
+
+  // ---- linked data (Salah / Sunnah / habits): read and write the app's own stores ----
+  function flowLinkRead(a, dk) {
+    var l = a.link;
+    if (l.kind === "salah") { var d = !!((lc("nc_salah_completions")[dk] || {})[l.key]); return { v: d ? 1 : 0, frac: d ? 1 : 0 }; }
+    if (l.kind === "habit") { var h = ((lc("nc_duniya_habit_log")[dk] || {})[l.key]) === "done"; return { v: h ? 1 : 0, frac: h ? 1 : 0 }; }
+    if (l.kind === "sunnah") {
+      var sec = ROUTINE_SECTIONS.filter(function (s) { return s.id === l.key; })[0];
+      var log = lc("nc_sunnah_log")[dk] || {};
+      var n = sec ? sec.actions.filter(function (x) { return log[x.id]; }).length : 0;
+      var t = sec ? sec.actions.length : 0;
+      return { v: n, frac: t ? n / t : 0 };
+    }
+    return { v: 0, frac: 0 };
+  }
+  function flowLinkWrite(a, dk, on) {
+    var l = a.link;
+    if (l.kind === "salah") {
+      var all = readJSON("nc_salah_completions", {});
+      all[dk] = all[dk] || {};
+      if (on) all[dk][l.key] = true; else delete all[dk][l.key];
+      writeJSON("nc_salah_completions", all);
+    } else if (l.kind === "habit") {
+      var hl = readJSON("nc_duniya_habit_log", {});
+      hl[dk] = hl[dk] || {};
+      if (on) hl[dk][l.key] = "done"; else delete hl[dk][l.key];
+      writeJSON("nc_duniya_habit_log", hl);
+    } else if (l.kind === "sunnah") {
+      var sec = ROUTINE_SECTIONS.filter(function (s) { return s.id === l.key; })[0];
+      if (!sec) return;
+      var log = getDaySunnahLog(dk);
+      sec.actions.forEach(function (x) { if (on) log[x.id] = true; else delete log[x.id]; });
+      setDaySunnahLog(dk, log);
+    }
+    flowLinkCache = {};
+  }
+
+  // ---- state of one action on one date ----
+  function flowState(a, dk) {
+    var e = flowEntry(dk, a.id);
+    if (e && e.s === "skip") return { kind: "skip", frac: 0, v: 0 };
+    if (e && e.s === "rs") return { kind: "rs", to: e.to, frac: 0, v: 0 };
+    var v = 0, frac = 0;
+    if (a.link) { var L = flowLinkRead(a, dk); v = L.v; frac = L.frac; }
+    else if (a.type === "simple") { v = e && e.v ? 1 : 0; frac = v; }
+    else {
+      v = e && typeof e.v === "number" ? e.v : 0;
+      frac = a.target ? Math.min(1, v / a.target) : (v > 0 ? 1 : 0);
+    }
+    return { kind: frac >= 1 ? "done" : frac > 0 ? "partial" : "open", v: v, frac: frac };
+  }
+
+  function flowTimeFor(a, dk, realOnly) {
+    if (a.time) return a.time;
+    if (a.link && a.link.kind === "salah") {
+      if (dk === todayKey()) { var T = homeTimings(); if (T && T[a.link.key]) return T[a.link.key]; }
+      if (realOnly) return null;
+      var m = SALAH_DEFAULT_MIN[a.link.key] || 720;
+      return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+    }
+    return null;
+  }
+  function flowMinOf(t) { var p = t.split(":"); return Number(p[0]) * 60 + Number(p[1]); }
+  function flowSectionOf(a, dk) {
+    var t = flowTimeFor(a, dk, false);
+    if (!t) return "any";
+    var h = Number(t.split(":")[0]);
+    return h < 12 ? "morning" : h < 17 ? "afternoon" : h < 21 ? "evening" : "night";
+  }
+
+  // ---- one day: what was planned, what's done ----
+  function flowDay(dk) {
+    var items = [];
+    flowActions().forEach(function (a) { if (flowApplies(a, dk)) items.push({ a: a, st: flowState(a, dk) }); });
+    var counted = items.filter(function (it) { return it.st.kind !== "skip" && it.st.kind !== "rs"; });
+    var done = 0, sum = 0, partial = false;
+    counted.forEach(function (it) { if (it.st.kind === "done") done++; else if (it.st.kind === "partial") partial = true; sum += it.st.frac; });
+    var pct = null;
+    if (counted.length) {
+      pct = Math.round((sum / counted.length) * 100);
+      if (done < counted.length && pct >= 100) pct = 99;
+      if (sum > 0 && pct < 1) pct = 1;
+    }
+    return { items: items, counted: counted, done: done, total: counted.length, pct: pct, sum: sum, partial: partial };
+  }
+
+  // Consecutive planned days completed (secondary info only; never shown for Salah).
+  function flowRun(a, dk) {
+    var n = 0, k = dk, guard = 0;
+    if (flowState(a, k).kind !== "done") k = fdAdd(k, -1);
+    while (guard++ < 60) {
+      if (!flowApplies(a, k)) { k = fdAdd(k, -1); if (k < a.startDate) break; continue; }
+      var s = flowState(a, k);
+      if (s.kind === "done") n++;
+      else if (s.kind === "skip" || s.kind === "rs") { /* set aside: neither breaks nor extends */ }
+      else break;
+      k = fdAdd(k, -1);
+      if (k < a.startDate) break;
+    }
+    return n;
+  }
+
+  // ---- changing things ----
+  function flowBuzz() { try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) { /* not supported */ } }
+  function flowNote(text) {
+    var el = document.getElementById("flow-note");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove("hidden");
+    el.classList.remove("fl-note-in"); void el.offsetWidth; el.classList.add("fl-note-in");
+    clearTimeout(flowNoteTimer);
+    flowNoteTimer = setTimeout(function () { el.classList.add("hidden"); }, 3400);
+  }
+
+  function flowMilestone(a, dk, day) {
+    var miles = readJSON(FLOW_MILES, {}), m = miles[dk] || {};
+    var cands = [];
+    if (day.total >= 3 && day.done === day.total) cands.push(["all", "Everything you planned today is done."]);
+    if (a.type === "time" && a.category === "study" && flowState(a, dk).kind === "done") cands.push(["study-" + a.id, "Study target completed."]);
+    var sec = flowSectionOf(a, dk);
+    if (sec !== "any") {
+      var same = day.counted.filter(function (it) { return flowSectionOf(it.a, dk) === sec; });
+      if (same.length >= 2 && same.every(function (it) { return it.st.kind === "done"; })) {
+        cands.push(["sec-" + sec, FLOW_SECTIONS.filter(function (s) { return s[0] === sec; })[0][1] + " plan complete."]);
+      }
+    }
+    if (day.done === 5 || day.done === 10) cands.push(["n" + day.done, day.done + " planned actions done."]);
+    for (var i = 0; i < cands.length; i++) {
+      if (m[cands[i][0]]) continue;
+      m[cands[i][0]] = 1; miles[dk] = m;
+      var cut = fdAdd(todayKey(), -14);
+      Object.keys(miles).forEach(function (k) { if (k < cut) delete miles[k]; });
+      writeJSON(FLOW_MILES, miles);
+      return cands[i][1];
+    }
+    return null;
+  }
+
+  function flowChanged(a, dk, wasDone) {
+    flowLinkCache = {};
+    var st = flowState(a, dk);
+    if (st.kind === "done" && !wasDone) {
+      flowPulseId = a.id; flowPulseKey = a.id + "|" + dk;
+      flowBuzz();
+      var msg = flowMilestone(a, dk, flowDay(dk));
+      if (msg) flowNote(msg);
+    }
+    flowRender();
+    flowPulseId = null; flowPulseKey = null;
+  }
+
+  function flowToggle(a, dk) {
+    var st = flowState(a, dk), was = st.kind === "done";
+    if (a.link) flowLinkWrite(a, dk, !was);
+    else if (a.type === "simple") flowSetEntry(dk, a.id, was ? null : { v: 1 });
+    else if (a.type === "value" && !a.target && !was) { openFlowValueSheet(a, dk); return; }
+    else flowSetEntry(dk, a.id, was ? null : { v: a.target || 1 });
+    flowChanged(a, dk, was);
+  }
+  function flowSetValue(a, dk, v) {
+    var was = flowState(a, dk).kind === "done";
+    flowSetEntry(dk, a.id, v > 0 ? { v: v } : null);
+    flowChanged(a, dk, was);
+  }
+  function flowStep(a) { return a.type === "time" ? 5 : 1; }
+
+  function flowSetAside(a, dk, kind, to) {
+    flowSetEntry(dk, a.id, kind === "skip" ? { s: "skip" } : { s: "rs", to: to });
+    flowLinkCache = {};
+    flowRender();
+  }
+  function flowUndoAside(a, dk) {
+    var e = flowEntry(dk, a.id);
+    if (e && e.s === "rs" && e.to) { // take back the copy made for the new date
+      var acts = flowActions().filter(function (x) { return !(x.fromId === a.id && x.repeat && x.repeat.kind === "once" && x.repeat.date === e.to && !x.archivedAt); });
+      flowSaveActions(acts);
+    }
+    flowSetEntry(dk, a.id, null);
+    flowRender();
+  }
+  function flowReschedule(a, fromDk, toDk) {
+    var acts = flowActions();
+    var r = a.repeat || {};
+    if (r.kind === "once") {
+      acts.forEach(function (x) { if (x.id === a.id) { x.repeat = { kind: "once", date: toDk }; x.startDate = toDk; } });
+      flowSaveActions(acts);
+    } else {
+      acts.push({ id: uid("fa"), name: a.name, type: a.type, category: a.category, time: a.time || null, target: a.target || null, unit: a.unit || "",
+        repeat: { kind: "once", date: toDk }, startDate: toDk, archivedAt: null, createdAt: new Date().toISOString(), fromId: a.id });
+      flowSaveActions(acts);
+      flowSetEntry(fromDk, a.id, { s: "rs", to: toDk });
+    }
+    flowRender();
+  }
+  function flowDelete(a) {
+    var acts = flowActions();
+    acts.forEach(function (x) { if (x.id === a.id) x.archivedAt = todayKey(); });
+    flowSaveActions(acts);
+    flowRender();
+  }
+  function flowAdd(fields) {
+    var today = todayKey();
+    var a = {
+      id: uid("fa"), name: fields.name, type: fields.type || "simple", category: fields.category || "task", time: fields.time || null,
+      target: fields.target || null, unit: fields.unit || "", repeat: fields.repeat || { kind: "once", date: today },
+      startDate: (fields.repeat && fields.repeat.kind === "once") ? fields.repeat.date : today, archivedAt: null, createdAt: new Date().toISOString()
+    };
+    if (fields.link) a.link = fields.link;
+    var acts = flowActions(); acts.push(a); flowSaveActions(acts);
+    return a;
+  }
+
+  // ---- rendering: shell ----
+  function flowFmtValue(a, v) {
+    if (a.unit === "h") { var h = Math.floor(v), m = Math.round((v - h) * 60); if (m === 60) { h++; m = 0; } return h + "h " + String(m).padStart(2, "0") + "m"; }
+    return fnum(v) + (a.type === "time" ? " min" : (a.unit ? " " + a.unit : ""));
+  }
+  function flowProgressText(a, v) {
+    if (a.type === "value") return (v ? flowFmtValue(a, v) : "Not logged") + (a.target ? " · target " + flowFmtValue(a, a.target) : "");
+    var u = a.type === "time" ? " min" : (a.unit ? " " + a.unit : "");
+    return fnum(v) + " / " + fnum(a.target || 0) + u;
+  }
+  function flowParseNum(s) {
+    s = String(s).trim();
+    if (s.indexOf(":") !== -1) { var p = s.split(":"); var h = Number(p[0]), m = Number(p[1]); return isNaN(h) || isNaN(m) ? NaN : h + m / 60; }
+    return Number(s);
+  }
+  function flowClock(t) { return ncFmtTime(parseTimeToday(t)); }
+
+  function openFlow(tab) {
+    if (tab) flowTab = tab;
+    if (!flowWeekStart) flowWeekStart = fdWeekStart(todayKey());
+    setActiveView("flow");
+  }
+  function renderFlow() {
+    var body = document.getElementById("flow-body");
+    if (!body) return;
+    flowLinkCache = {};
+    document.querySelectorAll(".fl-tab").forEach(function (b) {
+      var on = b.dataset.fltab === flowTab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    body.innerHTML = "";
+    if (flowTab === "week") renderFlowWeek(body); else renderFlowToday(body);
+  }
+  function flowRender() {
+    var v = document.getElementById("view-flow");
+    if (v && !v.classList.contains("hidden")) renderFlow();
+    if (document.getElementById("home-progress")) renderHomeProgress();
+  }
+
+  // ---- TODAY ----
+  function flowFirstUse(body) {
+    var box = hEl("div", "fl-first");
+    box.appendChild(hEl("span", "fl-first-icon", "📝"));
+    box.appendChild(hEl("h2", "fl-first-title", "Build today's plan."));
+    box.appendChild(hEl("p", "fl-first-sub", "Write down what you want to get done. Tick each one as it happens, and watch the week fill in."));
+    var add = hEl("button", "btn fl-cta", "+ Add my first action"); add.type = "button";
+    add.addEventListener("click", function () { openFlowAddSheet(); });
+    box.appendChild(add);
+    var sug = flowSuggestions();
+    if (sug.length) {
+      box.appendChild(hEl("p", "fl-first-or", "or start from something NURA already tracks"));
+      var row = hEl("div", "fl-chips");
+      sug.forEach(function (s) {
+        var c = hEl("button", "fl-chip", s.label); c.type = "button";
+        c.addEventListener("click", function () { s.add(); flowRender(); });
+        row.appendChild(c);
+      });
+      box.appendChild(row);
+    }
+    body.appendChild(box);
+  }
+
+  function flowSuggestions() {
+    var acts = flowActions().filter(function (a) { return !a.archivedAt; });
+    var has = function (kind, key) { return acts.some(function (a) { return a.link && a.link.kind === kind && a.link.key === key; }); };
+    var out = [];
+    if (!PRAYER_ORDER.every(function (n) { return has("salah", n); })) {
+      out.push({ label: "🕌 Five daily prayers", add: function () {
+        PRAYER_ORDER.forEach(function (n) { if (!has("salah", n)) flowAdd({ name: n, category: "salah", repeat: { kind: "daily" }, link: { kind: "salah", key: n } }); });
+      } });
+    }
+    [["morning-adhkar", "🤲 Morning adhkar", "07:00"], ["evening-adhkar", "🤲 Evening adhkar", "17:30"], ["before-sleep", "🌙 Before-sleep routine", "22:00"]].forEach(function (s) {
+      if (!has("sunnah", s[0]) && ROUTINE_SECTIONS.some(function (r) { return r.id === s[0]; })) {
+        out.push({ label: s[1], add: function () { flowAdd({ name: s[1].replace(/^\S+\s/, ""), category: "deen", repeat: { kind: "daily" }, link: { kind: "sunnah", key: s[0] } }); } });
+      }
+    });
+    getHabits().forEach(function (h) {
+      if (!has("habit", h.id)) out.push({ label: "🌱 " + h.name, add: function () { flowAdd({ name: h.name, category: "habit", repeat: { kind: "daily" }, link: { kind: "habit", key: h.id } }); } });
+    });
+    return out;
+  }
+
+  function renderFlowToday(body) {
+    var dk = todayKey(), acts = flowActions().filter(function (a) { return !a.archivedAt || a.archivedAt > dk; });
+    var day = flowDay(dk);
+
+    var sum = hEl("section", "fl-summary" + (day.total && day.done === day.total ? " is-complete" : ""));
+    sum.id = "fl-summary";
+    sum.appendChild(hEl("p", "fl-eyebrow", "Today · " + fdParse(dk).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })));
+    if (day.total) {
+      var line = hEl("div", "fl-sum-line");
+      line.appendChild(hEl("span", "fl-sum-big", day.done + " of " + day.total));
+      line.appendChild(hEl("span", "fl-sum-text", "planned actions completed"));
+      line.appendChild(hEl("span", "fl-sum-pct", day.pct + "%"));
+      sum.appendChild(line);
+      var bar = hEl("div", "fl-bar"); var fill = hEl("span", "fl-bar-fill"); fill.style.width = "0%"; bar.appendChild(fill); sum.appendChild(bar);
+      requestAnimationFrame(function () { fill.style.width = day.pct + "%"; });
+      var left = day.total - day.done;
+      sum.appendChild(hEl("p", "fl-sum-sub", left ? left + " remaining" + (day.partial ? " · partial progress counts in proportion" : "") : "Everything planned for today is done."));
+    } else {
+      sum.appendChild(hEl("p", "fl-sum-empty", acts.length ? "Nothing is planned for today." : "Nothing planned yet."));
+    }
+    body.appendChild(sum);
+
+    if (!acts.length) { flowFirstUse(body); return; }
+
+    // current moment: the latest timed open item already due = NOW, the first later one = NEXT
+    var now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes();
+    var open = day.counted.filter(function (it) { return it.st.kind !== "done"; });
+    var timedOpen = open.filter(function (it) { return flowTimeFor(it.a, dk, true); })
+      .sort(function (x, y) { return flowMinOf(flowTimeFor(x.a, dk, true)) - flowMinOf(flowTimeFor(y.a, dk, true)); });
+    var nowItem = null, nextItem = null;
+    timedOpen.forEach(function (it) {
+      var m = flowMinOf(flowTimeFor(it.a, dk, true));
+      if (m <= nowMin) nowItem = it; else if (!nextItem) nextItem = it;
+    });
+
+    var buckets = {};
+    day.items.forEach(function (it) {
+      if (it.st.kind === "skip" || it.st.kind === "rs") return;
+      var s = flowSectionOf(it.a, dk); (buckets[s] = buckets[s] || []).push(it);
+    });
+    var curSec = nowMin < 720 ? "morning" : nowMin < 1020 ? "afternoon" : nowMin < 1260 ? "evening" : "night";
+    FLOW_SECTIONS.forEach(function (s) {
+      var list = buckets[s[0]]; if (!list || !list.length) return;
+      list.sort(function (x, y) { return flowMinOf(flowTimeFor(x.a, dk, false) || "23:59") - flowMinOf(flowTimeFor(y.a, dk, false) || "23:59"); });
+      var allDone = list.every(function (it) { return it.st.kind === "done"; });
+      var sec = hEl("section", "fl-section" + (allDone ? " is-complete" : "") + (s[0] === curSec ? " is-current" : ""));
+      var head = hEl("div", "fl-sec-head");
+      head.appendChild(hEl("h2", "fl-sec-title", s[1]));
+      head.appendChild(hEl("span", "fl-sec-count", list.filter(function (it) { return it.st.kind === "done"; }).length + "/" + list.length));
+      sec.appendChild(head);
+      var ul = hEl("ul", "fl-list");
+      list.forEach(function (it) {
+        ul.appendChild(flowRow(it, dk, nowItem && nowItem.a.id === it.a.id ? "NOW" : (nextItem && nextItem.a.id === it.a.id ? "NEXT" : null)));
+      });
+      sec.appendChild(ul);
+      body.appendChild(sec);
+    });
+
+    var aside = day.items.filter(function (it) { return it.st.kind === "skip" || it.st.kind === "rs"; });
+    if (aside.length) {
+      var as = hEl("section", "fl-aside");
+      as.appendChild(hEl("h2", "fl-sec-title", "Set aside today"));
+      aside.forEach(function (it) {
+        var r = hEl("div", "fl-aside-row");
+        r.appendChild(hEl("span", "fl-aside-name", it.a.name));
+        r.appendChild(hEl("span", "fl-aside-state", it.st.kind === "skip" ? "Skipped" : "Moved to " + fdShort(it.st.to)));
+        var u = hEl("button", "fl-link", "Undo"); u.type = "button";
+        u.addEventListener("click", function () { flowUndoAside(it.a, dk); });
+        r.appendChild(u); as.appendChild(r);
+      });
+      body.appendChild(as);
+    }
+
+    var add = hEl("button", "btn fl-cta", "+ Add to today"); add.type = "button";
+    add.addEventListener("click", function () { openFlowAddSheet(); });
+    body.appendChild(add);
+  }
+
+  function flowRow(it, dk, tag) {
+    var a = it.a, st = it.st;
+    var li = hEl("li", "fl-row is-" + st.kind + (tag ? " is-" + tag.toLowerCase() : "") + (flowPulseId === a.id ? " pulse" : ""));
+    var cb = hEl("button", "fl-check" + (st.kind === "done" ? " is-done" : st.kind === "partial" ? " is-partial" : ""));
+    cb.type = "button"; cb.setAttribute("role", "checkbox");
+    cb.setAttribute("aria-checked", st.kind === "done" ? "true" : st.kind === "partial" ? "mixed" : "false");
+    cb.setAttribute("aria-label", (st.kind === "done" ? "Mark not done: " : "Mark done: ") + a.name);
+    var box = hEl("span", "fl-box", st.kind === "done" ? "✓" : ""); cb.appendChild(box);
+    cb.addEventListener("click", function () { flowToggle(a, dk); });
+    li.appendChild(cb);
+
+    var mid = hEl("div", "fl-mid");
+    var nameRow = hEl("div", "fl-name-row");
+    nameRow.appendChild(hEl("span", "fl-name", a.name));
+    if (tag) nameRow.appendChild(hEl("span", "fl-tag", tag));
+    mid.appendChild(nameRow);
+    var bits = [];
+    var t = flowTimeFor(a, dk, true); if (t) bits.push(flowClock(t));
+    bits.push(flowKindInfo(a.category).label);
+    if (a.type !== "simple" && !a.link) bits.push(flowProgressText(a, st.v));
+    else if (a.link && a.link.kind === "sunnah") { var tot = (ROUTINE_SECTIONS.filter(function (s) { return s.id === a.link.key; })[0] || { actions: [] }).actions.length; bits.push(st.v + " of " + tot + " done"); }
+    if (!(a.link && a.link.kind === "salah") && st.kind === "done") { var run = flowRun(a, dk); if (run >= 3) bits.push(run + " days in a row"); }
+    mid.appendChild(hEl("p", "fl-meta", bits.join(" · ")));
+
+    if (a.type !== "simple" && !a.link) {
+      var ctl = hEl("div", "fl-measure");
+      if (a.target && a.type !== "value") {
+        var mb = hEl("div", "fl-mbar"); var mf = hEl("span", "fl-mbar-fill"); mf.style.width = Math.round(st.frac * 100) + "%"; mb.appendChild(mf); ctl.appendChild(mb);
+      }
+      var row2 = hEl("div", "fl-stepper");
+      if (a.type !== "value") {
+        var minus = hEl("button", "fl-step", "−"); minus.type = "button"; minus.setAttribute("aria-label", "Less");
+        minus.addEventListener("click", function () { flowSetValue(a, dk, Math.max(0, st.v - flowStep(a))); });
+        row2.appendChild(minus);
+      }
+      var log = hEl("button", "fl-step fl-step-wide", a.type === "value" ? (st.v ? "Edit" : "Log") : "Set"); log.type = "button";
+      log.addEventListener("click", function () { openFlowValueSheet(a, dk); });
+      row2.appendChild(log);
+      if (a.type !== "value") {
+        var plus = hEl("button", "fl-step", "+"); plus.type = "button"; plus.setAttribute("aria-label", "More");
+        plus.addEventListener("click", function () { flowSetValue(a, dk, st.v + flowStep(a)); });
+        row2.appendChild(plus);
+      }
+      ctl.appendChild(row2); mid.appendChild(ctl);
+    }
+    li.appendChild(mid);
+
+    var more = hEl("button", "fl-more", "⋯"); more.type = "button"; more.setAttribute("aria-label", "Options for " + a.name);
+    more.addEventListener("click", function () { openFlowMenu(a, dk); });
+    li.appendChild(more);
+    return li;
+  }
+
+  // ---- sheets ----
+  function flowSheet(build) {
+    var sheet = document.getElementById("modal-flow-sheet");
+    sheet.innerHTML = "";
+    build(sheet);
+    document.getElementById("modal-flow").classList.remove("hidden");
+  }
+  function closeFlowSheet() { document.getElementById("modal-flow").classList.add("hidden"); }
+  function flowSheetHead(sheet, title) {
+    var h = hEl("div", "modal-header-row");
+    h.appendChild(hEl("h2", "", title));
+    var x = hEl("button", "icon-btn", "✕"); x.type = "button"; x.setAttribute("aria-label", "Close"); x.addEventListener("click", closeFlowSheet);
+    h.appendChild(x); sheet.appendChild(h);
+  }
+  function flowBtn(label, cls, fn) { var b = hEl("button", cls, label); b.type = "button"; b.addEventListener("click", fn); return b; }
+
+  function openFlowValueSheet(a, dk) {
+    var st = flowState(a, dk);
+    flowSheet(function (sheet) {
+      flowSheetHead(sheet, a.name);
+      sheet.appendChild(hEl("p", "modal-sub", fdLong(dk) + (a.target ? " · target " + flowFmtValue(a, a.target) : "")));
+      var inp = hEl("input", "text-input"); inp.type = a.unit === "h" ? "text" : "number"; inp.inputMode = "decimal"; inp.step = "any"; inp.min = "0";
+      inp.placeholder = a.unit === "h" ? "e.g. 7:10 or 7.5" : (a.type === "time" ? "minutes" : (a.unit || "amount"));
+      inp.value = st.v ? (a.unit === "h" ? fnum(st.v) : String(st.v)) : "";
+      sheet.appendChild(inp);
+      var msg = hEl("p", "day-note", "");
+      sheet.appendChild(flowBtn("Save", "btn btn-primary btn-full", function () {
+        var n = flowParseNum(inp.value);
+        if (isNaN(n) || n < 0) { msg.textContent = "Enter a number."; return; }
+        closeFlowSheet(); flowSetValue(a, dk, n);
+      }));
+      if (st.v) sheet.appendChild(flowBtn("Clear", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetValue(a, dk, 0); }));
+      sheet.appendChild(msg);
+      setTimeout(function () { inp.focus(); }, 60);
+    });
+  }
+
+  function openFlowMenu(a, dk) {
+    flowSheet(function (sheet) {
+      flowSheetHead(sheet, a.name);
+      var recurring = a.repeat && a.repeat.kind !== "once";
+      sheet.appendChild(hEl("p", "modal-sub", recurring ? "Repeats " + flowRepeatText(a.repeat) : "Just for " + fdShort(a.repeat.date)));
+      sheet.appendChild(flowBtn("Edit", "btn btn-outline btn-full", function () { openFlowAddSheet(a); }));
+      sheet.appendChild(flowBtn("Skip today", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetAside(a, dk, "skip"); }));
+      sheet.appendChild(flowBtn("Move to tomorrow", "btn btn-outline btn-full", function () { closeFlowSheet(); flowReschedule(a, dk, fdAdd(dk, 1)); }));
+      var pick = hEl("input", "text-input"); pick.type = "date"; pick.min = fdAdd(dk, 1);
+      var pickRow = hEl("div", "fl-pickrow");
+      pickRow.appendChild(pick);
+      pickRow.appendChild(flowBtn("Move", "btn btn-outline", function () { if (!pick.value || pick.value <= dk) return; closeFlowSheet(); flowReschedule(a, dk, pick.value); }));
+      sheet.appendChild(pickRow);
+      sheet.appendChild(flowBtn(recurring ? "Stop repeating (keep history)" : "Remove", "btn btn-outline btn-full btn-danger", function () { closeFlowSheet(); flowDelete(a); }));
+    });
+  }
+  function flowRepeatText(r) {
+    if (r.kind === "daily") return "every day";
+    if (r.kind === "weekdays") return "Monday to Friday";
+    if (r.kind === "days") return (r.days || []).map(function (d) { return FD_DAYS[d].slice(0, 3); }).join(", ");
+    return "once";
+  }
+
+  function openFlowAddSheet(edit) {
+    flowSheet(function (sheet) {
+      flowSheetHead(sheet, edit ? "Edit action" : "Add to today");
+      if (!edit) {
+        var sug = flowSuggestions();
+        if (sug.length) {
+          sheet.appendChild(hEl("p", "fl-form-label", "From NURA"));
+          var row = hEl("div", "fl-chips");
+          sug.forEach(function (s) { row.appendChild(flowBtn(s.label, "fl-chip", function () { s.add(); closeFlowSheet(); flowRender(); })); });
+          sheet.appendChild(row);
+          sheet.appendChild(hEl("p", "fl-form-label", "Or write your own"));
+        }
+      }
+      var f = { name: edit ? edit.name : "", category: edit ? edit.category : "task", type: edit ? edit.type : "simple", target: edit ? edit.target : null,
+        unit: edit ? edit.unit : "", time: edit ? edit.time : "", rk: edit ? edit.repeat.kind : "once", days: edit && edit.repeat.days ? edit.repeat.days.slice() : [], date: edit && edit.repeat.date ? edit.repeat.date : todayKey() };
+      var locked = !!(edit && edit.link);
+
+      var name = hEl("input", "text-input"); name.type = "text"; name.maxLength = 60; name.placeholder = "e.g. Complete Economics Chapter 3"; name.value = f.name;
+      sheet.appendChild(name);
+
+      sheet.appendChild(hEl("p", "fl-form-label", "Kind"));
+      var kinds = hEl("div", "fl-chips");
+      FLOW_KINDS.filter(function (k) { return k.k !== "salah" || f.category === "salah"; }).forEach(function (k) {
+        var c = hEl("button", "fl-chip" + (f.category === k.k ? " is-on" : ""), k.icon + " " + k.label); c.type = "button";
+        c.addEventListener("click", function () { f.category = k.k; kinds.querySelectorAll(".fl-chip").forEach(function (x) { x.classList.remove("is-on"); }); c.classList.add("is-on"); });
+        kinds.appendChild(c);
+      });
+      sheet.appendChild(kinds);
+
+      var typeBox = hEl("div", "fl-typebox");
+      if (!locked) {
+        sheet.appendChild(hEl("p", "fl-form-label", "How do you track it?"));
+        var sel = hEl("select", "text-input");
+        FLOW_TYPES.forEach(function (t) { var o = hEl("option", "", t.label); o.value = t.k; if (t.k === f.type) o.selected = true; sel.appendChild(o); });
+        sheet.appendChild(sel);
+        var tgt = hEl("input", "text-input"); tgt.type = "number"; tgt.min = "0"; tgt.step = "any"; tgt.inputMode = "decimal"; tgt.value = f.target || "";
+        var unit = hEl("input", "text-input"); unit.type = "text"; unit.maxLength = 14; unit.value = f.unit || "";
+        typeBox.appendChild(tgt); typeBox.appendChild(unit);
+        sheet.appendChild(typeBox);
+        var sync = function () {
+          f.type = sel.value;
+          typeBox.classList.toggle("hidden", f.type === "simple");
+          tgt.placeholder = f.type === "time" ? "Target minutes (e.g. 45)" : f.type === "value" ? "Target (optional, e.g. 7)" : "Target (e.g. 5)";
+          unit.classList.toggle("hidden", f.type === "time");
+          unit.placeholder = f.type === "value" ? "Unit (h for hours, or your own)" : "Unit (e.g. pages, questions)";
+        };
+        sel.addEventListener("change", sync); sync();
+        f._tgt = tgt; f._unit = unit;
+      }
+
+      sheet.appendChild(hEl("p", "fl-form-label", "Time (optional)"));
+      var time = hEl("input", "text-input"); time.type = "time"; time.value = f.time || "";
+      sheet.appendChild(time);
+
+      var repBox = hEl("div", "");
+      if (!locked || !edit) {
+        sheet.appendChild(hEl("p", "fl-form-label", "Repeat"));
+        var rep = hEl("select", "text-input");
+        [["once", "Today only"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["days", "Choose days"]].forEach(function (r) { var o = hEl("option", "", r[1]); o.value = r[0]; if (r[0] === f.rk) o.selected = true; rep.appendChild(o); });
+        sheet.appendChild(rep);
+        var dayRow = hEl("div", "fl-chips");
+        FD_LETTERS.forEach(function (l, i) {
+          var c = hEl("button", "fl-chip fl-day" + (f.days.indexOf(i) !== -1 ? " is-on" : ""), l); c.type = "button"; c.setAttribute("aria-label", FD_DAYS[i]);
+          c.addEventListener("click", function () { var ix = f.days.indexOf(i); if (ix === -1) f.days.push(i); else f.days.splice(ix, 1); c.classList.toggle("is-on"); });
+          dayRow.appendChild(c);
+        });
+        sheet.appendChild(dayRow);
+        var dateIn = hEl("input", "text-input"); dateIn.type = "date"; dateIn.min = todayKey(); dateIn.value = f.date;
+        sheet.appendChild(dateIn);
+        var repSync = function () { f.rk = rep.value; dayRow.classList.toggle("hidden", f.rk !== "days"); dateIn.classList.toggle("hidden", f.rk !== "once"); };
+        rep.addEventListener("change", repSync); repSync();
+        f._rep = rep; f._date = dateIn;
+      }
+
+      var msg = hEl("p", "day-note", "");
+      sheet.appendChild(flowBtn(edit ? "Save" : "Add", "btn btn-primary btn-full fl-sticky", function () {
+        var nm = name.value.trim();
+        if (!nm) { msg.textContent = "Give it a name."; return; }
+        var target = null, unitV = "";
+        if (!locked && f.type !== "simple") {
+          target = Number(f._tgt.value) || null;
+          if (f.type !== "value" && !(target > 0)) { msg.textContent = "Set a target so progress can be measured."; return; }
+          unitV = f.type === "time" ? "min" : f._unit.value.trim();
+        }
+        var repeat = null;
+        if (f._rep) {
+          if (f.rk === "once") { if (f._date.value < todayKey()) { msg.textContent = "Pick today or a later date."; return; } repeat = { kind: "once", date: f._date.value || todayKey() }; }
+          else if (f.rk === "days") { if (!f.days.length) { msg.textContent = "Choose at least one day."; return; } repeat = { kind: "days", days: f.days.slice().sort() }; }
+          else repeat = { kind: f.rk };
+        }
+        if (edit) {
+          var acts = flowActions();
+          acts.forEach(function (x) {
+            if (x.id !== edit.id) return;
+            x.name = nm; x.category = f.category; x.time = time.value || null;
+            if (!locked) { x.type = f.type; x.target = target; x.unit = unitV; }
+            if (repeat) { x.repeat = repeat; }
+          });
+          flowSaveActions(acts);
+        } else {
+          flowAdd({ name: nm, category: f.category, type: f.type, target: target, unit: unitV, time: time.value || null, repeat: repeat });
+        }
+        closeFlowSheet(); flowRender();
+      }));
+      if (edit) sheet.appendChild(flowBtn("Cancel", "btn btn-outline btn-full", closeFlowSheet));
+      sheet.appendChild(msg);
+      if (!edit) setTimeout(function () { name.focus(); }, 60);
+    });
+  }
+
+  // ---- WEEK: the Life Grid ----
+  function flowCell(a, dk, today) {
+    if (!flowApplies(a, dk)) return { k: "na" };
+    var st = flowState(a, dk);
+    if (st.kind === "skip") return { k: "skip", st: st };
+    if (st.kind === "rs") return { k: "rs", st: st };
+    if (dk > today) return { k: "future", st: st };
+    if (st.kind === "done") return { k: "done", st: st };
+    if (st.kind === "partial") return { k: "part", st: st };
+    return { k: dk === today ? "open" : "miss", st: st };
+  }
+  function flowWeekData(start) {
+    var today = todayKey(), days = [];
+    for (var i = 0; i < 7; i++) days.push(fdAdd(start, i));
+    var rows = [];
+    flowActions().forEach(function (a) {
+      if (!days.some(function (dk) { return flowApplies(a, dk); })) return;
+      var cells = days.map(function (dk) { return flowCell(a, dk, today); });
+      var planned = 0, done = 0;
+      cells.forEach(function (c) { if (c.k === "done" || c.k === "part" || c.k === "open" || c.k === "miss") { planned++; if (c.k === "done") done++; } });
+      rows.push({ a: a, cells: cells, planned: planned, done: done, sort: a.time ? flowMinOf(a.time) : (a.link && a.link.kind === "salah" ? (SALAH_DEFAULT_MIN[a.link.key] || 720) : 1500) });
+    });
+    rows.sort(function (x, y) { return x.sort - y.sort || (x.a.name < y.a.name ? -1 : 1); });
+    var totalP = 0, totalD = 0, perDay = days.map(function () { return { p: 0, d: 0 }; });
+    rows.forEach(function (r) { totalP += r.planned; totalD += r.done; r.cells.forEach(function (c, i) { if (c.k === "done" || c.k === "part" || c.k === "open" || c.k === "miss") { perDay[i].p++; if (c.k === "done") perDay[i].d++; } }); });
+    return { start: start, days: days, rows: rows, totalP: totalP, totalD: totalD, perDay: perDay, today: today };
+  }
+
+  // Honest summary lines: every claim needs enough planned days behind it.
+  function flowWeekLines(data) {
+    var lines = [];
+    var ended = data.today > data.days[6];
+    if (data.totalP < 1) return ["Nothing was planned this week."];
+    lines.push("This week: " + data.totalD + " of " + data.totalP + " planned actions completed" + (ended || data.today >= data.days[6] ? "." : " so far."));
+    if (data.totalP < 6) { lines.push("Not enough planned days yet to see a pattern."); return lines; }
+    var elig = [];
+    data.perDay.forEach(function (d, i) { if (data.days[i] <= data.today && d.p >= 2) elig.push({ i: i, rate: d.d / d.p }); });
+    if (elig.length >= 3) {
+      var mx = Math.max.apply(null, elig.map(function (e) { return e.rate; })), mn = Math.min.apply(null, elig.map(function (e) { return e.rate; }));
+      if (mx > 0 && mx - mn >= 0.2) {
+        var top = elig.filter(function (e) { return e.rate === mx; }).slice(0, 2).map(function (e) { return FD_DAYS[e.i]; });
+        lines.push("Your strongest day" + (top.length > 1 ? "s" : "") + ": " + top.join(" and ") + ".");
+      }
+    }
+    data.rows.filter(function (r) { return r.planned >= 3; }).sort(function (x, y) { return y.planned - x.planned; }).slice(0, 2).forEach(function (r) {
+      lines.push(r.a.name + " was completed " + r.done + " of " + r.planned + " planned days.");
+    });
+    var prev = flowWeekData(fdAdd(data.start, -7));
+    var best = null;
+    data.rows.forEach(function (r) {
+      if (r.planned < 3) return;
+      var p = prev.rows.filter(function (x) { return x.a.id === r.a.id; })[0];
+      if (!p || p.planned < 3) return;
+      var gain = r.done / r.planned - p.done / p.planned;
+      if (gain >= 0.15 && r.done > p.done && (!best || gain > best.gain)) best = { r: r, p: p, gain: gain };
+    });
+    if (best) lines.push(best.r.a.name + " improved: " + best.r.done + " of " + best.r.planned + " days, up from " + best.p.done + " of " + best.p.planned + " last week.");
+    return lines.slice(0, 5);
+  }
+
+  var FLOW_CELL_TEXT = { done: "✓", part: "◐", open: "○", miss: "·", skip: "–", rs: "↷", future: "", na: "" };
+  var FLOW_CELL_LABEL = { done: "completed", part: "partly done", open: "not done yet", miss: "not completed", skip: "skipped", rs: "moved to another day", future: "planned", na: "not planned" };
+
+  function renderFlowWeek(body) {
+    var thisWeek = fdWeekStart(todayKey());
+    if (!flowWeekStart) flowWeekStart = thisWeek;
+    var data = flowWeekData(flowWeekStart);
+    var anyActions = flowActions().length > 0;
+
+    var nav = hEl("div", "fl-weeknav");
+    var prev = hEl("button", "fl-navbtn", "‹"); prev.type = "button"; prev.setAttribute("aria-label", "Previous week");
+    prev.addEventListener("click", function () { flowWeekStart = fdAdd(flowWeekStart, -7); renderFlow(); });
+    var next = hEl("button", "fl-navbtn", "›"); next.type = "button"; next.setAttribute("aria-label", "Next week");
+    next.disabled = flowWeekStart >= fdAdd(thisWeek, 14);
+    next.addEventListener("click", function () { flowWeekStart = fdAdd(flowWeekStart, 7); renderFlow(); });
+    var lab = hEl("button", "fl-weeklabel", flowWeekStart === thisWeek ? "This week · " + fdShort(data.days[0]) + " – " + fdShort(data.days[6]) : fdShort(data.days[0]) + " – " + fdShort(data.days[6]));
+    lab.type = "button"; lab.addEventListener("click", function () { flowWeekStart = thisWeek; renderFlow(); });
+    nav.appendChild(prev); nav.appendChild(lab); nav.appendChild(next);
+    body.appendChild(nav);
+
+    if (!anyActions) { flowFirstUse(body); return; }
+
+    var sum = hEl("section", "fl-weeksum");
+    flowWeekLines(data).forEach(function (l, i) { sum.appendChild(hEl("p", i === 0 ? "fl-weeksum-main" : "fl-weeksum-line", l)); });
+    body.appendChild(sum);
+
+    if (!data.rows.length) {
+      body.appendChild(hEl("p", "fl-empty-week", "Nothing planned in this week."));
+    } else {
+      var wrap = hEl("div", "fl-gridwrap"); wrap.tabIndex = 0;
+      var grid = hEl("div", "fl-grid"); grid.setAttribute("role", "grid");
+      grid.appendChild(hEl("div", "fl-gh fl-gh-corner", ""));
+      data.days.forEach(function (dk, i) {
+        var h = hEl("div", "fl-gh" + (dk === data.today ? " is-today" : ""));
+        h.appendChild(hEl("span", "fl-gh-l", FD_LETTERS[i])); h.appendChild(hEl("span", "fl-gh-d", String(fdParse(dk).getDate())));
+        grid.appendChild(h);
+      });
+      data.rows.forEach(function (r) {
+        var lbl = hEl("div", "fl-rl");
+        lbl.appendChild(hEl("span", "fl-rl-name", flowKindInfo(r.a.category).icon + " " + r.a.name));
+        lbl.appendChild(hEl("span", "fl-rl-sub", r.planned ? r.done + " of " + r.planned + " days" : "planned ahead"));
+        grid.appendChild(lbl);
+        r.cells.forEach(function (c, i) {
+          var dk = data.days[i];
+          var cell = hEl("button", "fl-cell c-" + c.k + (dk === data.today ? " is-today" : "") + (flowPulseKey === r.a.id + "|" + dk ? " just" : ""), FLOW_CELL_TEXT[c.k]); cell.type = "button";
+          cell.setAttribute("aria-label", r.a.name + ", " + FD_DAYS[i] + " " + fdShort(dk) + ": " + FLOW_CELL_LABEL[c.k]);
+          if (c.k === "na") cell.disabled = true;
+          else cell.addEventListener("click", function () { openFlowCellSheet(r.a, dk); });
+          grid.appendChild(cell);
+        });
+      });
+      wrap.appendChild(grid); body.appendChild(wrap);
+      var legend = hEl("p", "fl-legend", "✓ done   ◐ partly   ○ not yet   · not completed   – skipped   ↷ moved");
+      body.appendChild(legend);
+    }
+    flowReflectionCard(body, data);
+  }
+
+  function flowReflectionCard(body, data) {
+    if (data.today < data.days[6] || data.totalP < 5) return;
+    var rows = data.rows.filter(function (r) { return r.planned >= 3; });
+    var card = hEl("section", "fl-reflect");
+    card.appendChild(hEl("p", "fl-eyebrow", "Your week"));
+    card.appendChild(hEl("p", "fl-ref-main", data.totalD + " / " + data.totalP + " planned actions completed"));
+    if (rows.length) {
+      var byRate = rows.slice().sort(function (x, y) { return (y.done / y.planned) - (x.done / x.planned); });
+      var top = byRate[0];
+      if (top.done / top.planned >= 0.6) card.appendChild(hEl("p", "fl-ref-line", "Most consistent: " + top.a.name));
+      var low = byRate[byRate.length - 1];
+      if (low !== top && low.done / low.planned < 0.5) card.appendChild(hEl("p", "fl-ref-line", "Needs adjustment: " + low.a.name + " (" + low.done + " of " + low.planned + ")"));
+    }
+    var saved = readJSON(FLOW_REFLECT, {})[data.start] || null;
+    card.appendChild(hEl("p", "fl-ref-q", "How did this week feel? (optional)"));
+    var row = hEl("div", "fl-chips");
+    [["easy", "Easy"], ["balanced", "Balanced"], ["difficult", "Difficult"]].forEach(function (o) {
+      var c = hEl("button", "fl-chip" + (saved === o[0] ? " is-on" : ""), o[1]); c.type = "button";
+      c.addEventListener("click", function () { var all = readJSON(FLOW_REFLECT, {}); if (all[data.start] === o[0]) delete all[data.start]; else all[data.start] = o[0]; writeJSON(FLOW_REFLECT, all); renderFlow(); });
+      row.appendChild(c);
+    });
+    card.appendChild(row);
+    body.appendChild(card);
+  }
+
+  function openFlowCellSheet(a, dk) {
+    var today = todayKey();
+    flowSheet(function (sheet) {
+      flowSheetHead(sheet, a.name);
+      sheet.appendChild(hEl("p", "modal-sub", fdLong(dk)));
+      var st = flowState(a, dk);
+      var label = st.kind === "done" ? "Completed" : st.kind === "partial" ? "Partly done" : st.kind === "skip" ? "Skipped" : st.kind === "rs" ? "Moved to " + fdShort(st.to) : dk > today ? "Planned" : "Not completed";
+      sheet.appendChild(hEl("p", "fl-cell-state", label));
+      if (a.type !== "simple" && !a.link && dk <= today && st.kind !== "skip" && st.kind !== "rs") sheet.appendChild(hEl("p", "modal-sub", flowProgressText(a, st.v)));
+      if (dk > today) { sheet.appendChild(hEl("p", "modal-sub", "This day hasn't happened yet.")); return; }
+      if (st.kind === "skip" || st.kind === "rs") { sheet.appendChild(flowBtn("Undo", "btn btn-outline btn-full", function () { closeFlowSheet(); flowUndoAside(a, dk); })); return; }
+      if (a.type === "simple" || a.link) {
+        sheet.appendChild(flowBtn(st.kind === "done" ? "Mark not done" : "Mark done", "btn btn-primary btn-full", function () { closeFlowSheet(); flowToggle(a, dk); }));
+      } else {
+        sheet.appendChild(flowBtn(a.type === "value" ? "Log a value" : "Set progress", "btn btn-primary btn-full", function () { openFlowValueSheet(a, dk); }));
+        if (st.kind === "done" || st.kind === "partial") sheet.appendChild(flowBtn("Clear", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetValue(a, dk, 0); }));
+      }
+      sheet.appendChild(flowBtn("Skip this day", "btn btn-outline btn-full", function () { closeFlowSheet(); flowSetAside(a, dk, "skip"); }));
+    });
+  }
+
+  // ---- Home: a compact look, not the whole system ----
+  function flowWeekStrip() {
+    var start = fdWeekStart(todayKey()), today = todayKey(), out = [];
+    for (var i = 0; i < 7; i++) { var dk = fdAdd(start, i); var d = dk <= today ? flowDay(dk) : null; out.push({ dk: dk, letter: FD_LETTERS[i], pct: d ? d.pct : null, isToday: dk === today, future: dk > today }); }
+    return out;
+  }
+
+  function initFlow() {
+    document.getElementById("flow-back").addEventListener("click", function () { setActiveView("home"); });
+    document.querySelectorAll(".fl-tab").forEach(function (b) {
+      b.addEventListener("click", function () { flowTab = b.dataset.fltab; if (flowTab === "week") flowWeekStart = fdWeekStart(todayKey()); renderFlow(); });
+    });
+    document.getElementById("modal-flow").addEventListener("click", function (e) { if (e.target === this) closeFlowSheet(); });
+  }
+
   // ---------- INIT ----------
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -10487,6 +11382,7 @@
     initVault();
     initShield();
     initChatInput();
+    initFlow();
     initMore();
     initDuniyaHabits();
     initDuniyaProductivity();

@@ -115,6 +115,20 @@
     <section class="hh-actions" id="home-actions" aria-label="Useful next actions"></section>
   </main>
 
+  <!-- DAILY FLOW + LIFE GRID: opened from Home's progress card; not a tab -->
+  <main class="view hidden" id="view-flow" data-view="flow">
+    <header class="fl-header">
+      <button class="fl-back" id="flow-back" type="button">&larr; Home</button>
+      <h1 class="fl-title">Daily Flow</h1>
+    </header>
+    <div class="fl-tabs" role="tablist" aria-label="Daily Flow views">
+      <button class="fl-tab active" data-fltab="today" role="tab" aria-selected="true" type="button">Today</button>
+      <button class="fl-tab" data-fltab="week" role="tab" aria-selected="false" type="button">Week</button>
+    </div>
+    <p class="fl-note hidden" id="flow-note" role="status" aria-live="polite"></p>
+    <div id="flow-body"></div>
+  </main>
+
   <!-- SUNNAH -->
   <main class="view hidden" id="view-sunnah" data-view="sunnah">
     <header class="top-header">
@@ -651,6 +665,11 @@
     <p class="modal-sub" style="margin-top:16px;">Last 7 days</p>
     <div id="progress-details-week"></div>
   </div>
+</div>
+
+<!-- DAILY FLOW SHEET (add / edit / options / value / grid-cell detail) -->
+<div class="modal-overlay hidden" id="modal-flow">
+  <div class="modal-sheet" id="modal-flow-sheet"></div>
 </div>
 
 <!-- SHIELD MODAL -->
