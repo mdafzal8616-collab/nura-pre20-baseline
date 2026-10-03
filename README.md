@@ -53,4 +53,4 @@ Not done, on purpose: reminders (this is a web build with no notification permis
 
 Navigation is now **Today · Hamdard · Progress · Plan**. Today shows one dominant recommendation (NURA Now) sized to the time before the next Salah and the person's own pace, with "Why this?", one-tap Start, a Salah transition that remembers where work stopped, a Today Flow, and a compact status. Plan is a confirmation screen; planning is never required.
 
-Everything is in `docs/SPRINT1.md` (architecture, data model, Salah Trust Layer, security, deviations, limits). The 70-scenario regression lab is `lab.html`.
+Everything is in `docs/SPRINT1.md` (architecture, data model, Salah Trust Layer, security, deviations, limits). The 71-scenario regression lab is `lab.html`.

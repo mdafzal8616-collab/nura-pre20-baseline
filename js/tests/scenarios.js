@@ -234,6 +234,14 @@
       return true;
     } });
 
+  E.add({ id: "S10b", cat: "correction", title: "'This isn't realistic' asks for LESS when there is plenty of time, not just a longer estimate", inputs: "plenty of time (usable ~100 min), pace 10 -> 5 questions; user reports low energy today (+30%)", expected: "fewer questions than before (and never more than 1 fewer than 'before / 1.3')",
+    run: function () {
+      var ss = sessions(PHYS, [10, 10, 10, 10, 10]), tk = task({ deadline: "2026-10-04", priority: 3 });
+      var before = B.decide(input({ nowMin: TIMINGS.Asr - 108, tasks: [tk], sessions: ss }));
+      var after = B.decide(input({ nowMin: TIMINGS.Asr - 108, tasks: [tk], sessions: ss, corrections: [{ id: "c9", key: PHYS.key, scope: "today", factor: 1.3, date: DATE, reason: "low_energy" }] }));
+      return { before: before.primary.units, after: after.primary.units, afterMin: after.primary.minutes };
+    }, describe: function (r) { return r; }, check: function (r) { var want = Math.floor(r.before / 1.3); return r.after < r.before && r.after <= want && r.after >= want - 1 ? true : "expected about " + want + ": " + JSON.stringify(r); } });
+
   // ============================================================ EXTRA: realism / hierarchy
   E.add({ id: "R01", cat: "realism", title: "Never recommends more units than remain", inputs: "Physics target 20, done 19", expected: "at most 1 question",
     run: function () { return B.decide(input({ nowMin: atAsrMinus(80), tasks: [task({ done: 19, deadline: "2026-10-04" })], sessions: sessions(PHYS, [10, 10, 10, 10, 10]) })); }, describe: brief,

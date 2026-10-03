@@ -121,6 +121,12 @@
     var units = Math.floor(usableMin * (1 - margin) / pace);
     var cap = Math.min(p.remainingUnits === undefined ? Infinity : p.remainingUnits, p.todayCap === undefined ? Infinity : p.todayCap);
     units = Math.min(units, cap);
+    // "this target isn't realistic": a meaningful correction asks for LESS, not just a longer estimate
+    // (measured against the UNcorrected size, so the same correction is not counted twice)
+    if ((p.factor || 1) >= 1.1 && units > 1) {
+      var rawUnits = Math.min(Math.floor(usableMin * (1 - margin) / est.central), cap);
+      units = Math.max(1, Math.min(units, Math.floor(rawUnits / p.factor)));
+    }
     if (units >= 1) { res.mode = "units"; res.units = units; res.minutes = ceil5(units * pace); return res; }
     var budget = floor5(usableMin * (1 - margin)); // not even one unit fits: a time-boxed attempt instead
     if (budget >= 10 && cap >= 1) { res.mode = "timebox"; res.minutes = Math.min(budget, 30); }

@@ -94,7 +94,7 @@ Versioned, ordered, recorded, idempotent (`NuraRepo.MIGRATIONS`). Never edit a s
 nura_now_shown, nura_now_started, nura_now_changed, nura_now_dismissed, why_this_opened, capacity_corrected, task_started, task_completed, task_abandoned, salah_transition_triggered, salah_resume_started, intervention_sent, intervention_suppressed, plan_created, plan_skipped, temporary_context_started/ended, replan_auto/proposed/applied.
 
 ## Scenario Lab
-Open `lab.html`. 70 scenarios across: realism, capacity, Salah, interruption, privacy, routing, offline, correction, context, safety. Each record has id, inputs, expected, actual, PASS/FAIL, reason and Brain version; the last run is kept and the next run reports regressions/fixes. Re-run it after any change to Brain rules, copy, routing or (later) prompts/models/agents.
+Open `lab.html`. 71 scenarios across: realism, capacity, Salah, interruption, privacy, routing, offline, correction, context, safety. Each record has id, inputs, expected, actual, PASS/FAIL, reason and Brain version; the last run is kept and the next run reports regressions/fixes. Re-run it after any change to Brain rules, copy, routing or (later) prompts/models/agents.
 
 ## Deviations from the brief (and why)
 1. **Not React Native / Expo / TypeScript / SQLite.** The repo is a plain HTML/CSS/JS web app (with an Android WebView wrapper); there is no Node, npm or Expo project on this machine, and the project rules say not to install SDKs without asking. Per the brief's own rule (do not rewrite the project; reuse sound architecture) Sprint 1 is built in the existing app. Logic is in pure modules behind a storage interface, so it ports to Expo/SQLite later. No type checker or linter was available; the Scenario Lab is the safety net.
