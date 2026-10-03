@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NURA Scenario Lab</title>
+<style>
+  :root { --bg:#F7F4EC; --ink:#1F2A24; --mut:#6A6244; --ok:#1E6B4A; --bad:#B3361F; --card:#fff; --line:#E3DCC4; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--mut); margin:0 0 12px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+  button { min-height:40px; padding:8px 14px; border-radius:10px; border:1px solid var(--line); background:#fff; font:inherit; cursor:pointer; }
+  button.primary { background:#174C3C; color:#fff; border-color:#174C3C; }
+  .sum { padding:10px 14px; border-radius:12px; background:var(--card); border:1px solid var(--line); margin-bottom:12px; font-weight:700; }
+  .sum.pass { border-color:var(--ok); color:var(--ok); } .sum.fail { border-color:var(--bad); color:var(--bad); }
+  .cat { margin:18px 0 6px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; font-size:12px; color:var(--mut); }
+  .row { background:var(--card); border:1px solid var(--line); border-left-width:5px; border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+  .row.pass { border-left-color:var(--ok); } .row.fail { border-left-color:var(--bad); }
+  .id { font-weight:800; margin-right:6px; } .tag { font-size:11px; font-weight:800; padding:1px 6px; border-radius:6px; color:#fff; }
+  .tag.pass { background:var(--ok); } .tag.fail { background:var(--bad); }
+  dl { margin:6px 0 0; display:grid; grid-template-columns:90px 1fr; gap:2px 8px; font-size:12.5px; } dt { color:var(--mut); } dd { margin:0; word-break:break-word; }
+  select { min-height:40px; border-radius:10px; border:1px solid var(--line); padding:0 8px; font:inherit; }
+</style>
+</head>
+<body>
+<h1>NURA Scenario Lab</h1>
+<p class="sub">Repeatable evaluation of the Brain, Salah, capacity, safety and fallback behaviour. Same scenarios every run; results are compared with the previous run.</p>
+<div class="bar">
+  <button class="primary" id="run">Run all scenarios</button>
+  <select id="filter"><option value="">All categories</option></select>
+  <button id="export">Download JSON</button>
+  <label><input type="checkbox" id="failonly"> failures only</label>
+</div>
+<div id="summary" class="sum">Not run yet.</div>
+<div id="diff" class="sub"></div>
+<div id="out"></div>
+
+<script src="js/core/platform.js"></script>
+<script src="js/core/salah.js"></script>
+<script src="js/core/capacity.js"></script>
+<script src="js/core/interruption.js"></script>
+<script src="js/core/session.js"></script>
+<script src="js/core/guard.js"></script>
+<script src="js/core/i18n.js"></script>
+<script src="js/core/brain.js"></script>
+<script src="js/core/ai.js"></script>
+<script src="js/core/sources.js"></script>
+<script src="js/data/repo.js"></script>
+<script src="js/tests/evalkit.js"></script>
+<script src="js/tests/scenarios.js"></script>
+<script>
+(function () {
+  var E = window.NuraEval, last = null, KEY = "nura_lab_last_run";
+  var sel = document.getElementById("filter");
+  E.CATEGORIES.forEach(function (c) { var o = document.createElement("option"); o.value = c[0]; o.textContent = c[1]; sel.appendChild(o); });
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+  function render(run, d) {
+    var sum = document.getElementById("summary");
+    sum.className = "sum " + (run.fail ? "fail" : "pass");
+    sum.textContent = (run.fail ? "FAIL" : "PASS") + " — " + run.pass + " / " + run.total + " scenarios passed · Brain version " + run.version + " · " + run.at;
+    document.getElementById("diff").textContent = d ? "Compared with previous run: " + d.regressed.length + " regressed" + (d.regressed.length ? " (" + d.regressed.join(", ") + ")" : "") + ", " + d.fixed.length + " fixed, " + d.added.length + " new." : "";
+    var failOnly = document.getElementById("failonly").checked, out = document.getElementById("out"); out.innerHTML = "";
+    E.CATEGORIES.forEach(function (c) {
+      var rs = run.results.filter(function (r) { return r.cat === c[0] && (!failOnly || !r.pass); }); if (!rs.length) return;
+      var h = document.createElement("div"); h.className = "cat"; h.textContent = c[1] + " (" + rs.filter(function (r) { return r.pass; }).length + "/" + rs.length + ")"; out.appendChild(h);
+      rs.forEach(function (r) {
+        var el = document.createElement("div"); el.className = "row " + (r.pass ? "pass" : "fail");
+        el.innerHTML = '<span class="tag ' + (r.pass ? "pass" : "fail") + '">' + (r.pass ? "PASS" : "FAIL") + '</span> <span class="id">' + esc(r.id) + '</span>' + esc(r.title) +
+          '<dl><dt>Inputs</dt><dd>' + esc(r.inputs) + '</dd><dt>Expected</dt><dd>' + esc(r.expected) + '</dd><dt>Actual</dt><dd>' + esc(r.actual) + '</dd><dt>Reason</dt><dd>' + esc(r.reason) + '</dd><dt>Version</dt><dd>' + esc(r.version) + '</dd></dl>';
+        out.appendChild(el);
+      });
+    });
+  }
+  function run() {
+    var prev = null; try { prev = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+    document.getElementById("summary").textContent = "Running…";
+    E.runAll(window.NuraPlatform.BRAIN_VERSION, sel.value || null).then(function (r) {
+      last = r; window.NURA_LAB_RESULT = r;
+      if (!sel.value) { try { localStorage.setItem(KEY, JSON.stringify(r)); } catch (e) {} }
+      render(r, !sel.value ? E.diff(prev, r) : null);
+    });
+  }
+  document.getElementById("run").addEventListener("click", run);
+  document.getElementById("failonly").addEventListener("change", function () { if (last) render(last, null); });
+  document.getElementById("export").addEventListener("click", function () {
+    if (!last) return; var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(last, null, 2)], { type: "application/json" })); a.download = "nura-lab-" + last.version + ".json"; a.click();
+  });
+  run();
+})();
+</script>
+</body>
+</html>

@@ -48,3 +48,9 @@ Only these five items were changed; Study Mission is still not built.
 5. **"Create your own goal".** No longer becomes a Study Focus/timer. It opens a short setup (name, when/how often, optional time, how it's tracked), and Finish saves it into Daily Flow, shows it as today's priority with a checkbox/stepper (no timer), and counts it once in Today/Home/Life Grid. NURA files the goal (kind + tag such as "Routine · Education") and reads measures from the name ("20 pages", "30 minutes") only as visible, editable suggestions. One optional idea may follow (e.g. repeat Mon–Fri) and is never applied unasked.
 
 Not done, on purpose: reminders (this is a web build with no notification permission, so no reminder control is shown).
+
+## Sprint 1 — Brain V0 (build 0.1.0) — 2026-10-03
+
+Navigation is now **Today · Hamdard · Progress · Plan**. Today shows one dominant recommendation (NURA Now) sized to the time before the next Salah and the person's own pace, with "Why this?", one-tap Start, a Salah transition that remembers where work stopped, a Today Flow, and a compact status. Plan is a confirmation screen; planning is never required.
+
+Everything is in `docs/SPRINT1.md` (architecture, data model, Salah Trust Layer, security, deviations, limits). The 70-scenario regression lab is `lab.html`.

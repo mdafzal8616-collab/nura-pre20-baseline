@@ -2,37 +2,23 @@
 <html lang="en" class="on-home">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NURA (Pre-20 Baseline)</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/sprint1.css">
 </head>
 <body>
 
 <div id="app">
 
-  <!-- HOME (rebuilt 2026-09-25): header, Right Now hero, companion note, Today's Priority,
-       Today's Progress, contextual quick actions. Everything is rendered from the app's own
-       saved data; nothing here is placeholder. -->
+  <!-- TODAY (Sprint 1): rendered by js/features/today.js. The old Home cards (Salah hero, priority card, progress
+       ring, tiles) are gone from this screen; the priority card element is kept parked below only because the
+       Duniya tools still mount it. -->
   <main class="view" id="view-home" data-view="home">
     <div class="home-atmosphere" aria-hidden="true"></div>
-
-    <header class="hh-header">
-      <div class="hh-head-text">
-        <p class="hh-date" id="home-date"></p>
-        <h1 class="hh-greeting" id="home-greeting">Assalamu Alaikum</h1>
-        <p class="hh-context"><span id="home-context"></span><span class="hh-day-pill" id="journey-badge-text">DAY 1</span></p>
-      </div>
-      <button class="avatar-btn hh-avatar" id="open-more-from-home" aria-label="Profile">
-        <span id="avatar-initial">N</span>
-      </button>
-    </header>
-
-    <section class="hero" id="salah-hero" aria-live="polite"></section>
-
-    <section class="hamdard-now hidden" id="hamdard-now"></section>
-
-    <div id="priority-card-home-slot"></div>
-
+    <div id="today-root"></div>
+  </main>
+  <div id="priority-park" class="hidden" aria-hidden="true">
     <section class="card priority-card" id="priority-card-el">
       <div class="card-row pc-eyebrow-row">
         <h2>Today's Priority</h2>
@@ -111,10 +97,7 @@
       </div>
     </section>
 
-    <section class="hh-progress" id="home-progress" aria-label="Today's progress"></section>
-
-    <section class="hh-actions" id="home-actions" aria-label="Useful next actions"></section>
-  </main>
+  </div>
 
   <!-- DAILY FLOW + LIFE GRID: opened from Home's progress card; not a tab -->
   <main class="view hidden" id="view-flow" data-view="flow">
@@ -251,12 +234,12 @@
   <main class="view hidden" id="view-chat" data-view="chat">
     <header class="top-header">
       <div>
-        <p class="eyebrow">AI Chat</p>
-        <h1>Bhai</h1>
+        <p class="eyebrow" data-i18n="nav.hamdard">Hamdard</p>
+        <h1>Hamdard</h1>
       </div>
     </header>
     <section class="card">
-      <p class="pending-note">Bhai reads your real NURA data on this device (today's Salah, plan, priority, progress) to suggest one realistic next step. It is rule-based, not a live AI model — nothing you type leaves this device. Not a doctor, therapist or scholar.</p>
+      <p class="pending-note">Hamdard reads your real NURA data on this device (today's Salah, plan, priority, progress) to suggest one realistic next step. It is rule-based, not a live AI model — nothing you type leaves this device. Not a doctor, therapist or scholar.</p>
     </section>
     <section class="card">
       <h2>What's going on?</h2>
@@ -437,7 +420,7 @@
     <header class="top-header">
       <div>
         <p class="eyebrow">Vault</p>
-        <h1>Hamdard</h1>
+        <h1>Private Vault</h1>
       </div>
     </header>
 
@@ -563,9 +546,9 @@
     </section>
 
     <section class="card">
-      <h2>Hamdard</h2>
+      <h2>Private Vault</h2>
       <p class="muted-line">Your private, encrypted reflection space.</p>
-      <button class="btn btn-outline btn-full" id="open-hamdard-btn">Open Hamdard</button>
+      <button class="btn btn-outline btn-full" id="open-hamdard-btn">Open Vault</button>
     </section>
 
     <section class="card">
@@ -593,7 +576,7 @@
 
     <section class="card">
       <h2>About this build</h2>
-      <p class="muted-line">NURA — Pre-20 September baseline. Restored from the project as it stood on 19 Sep 2026 (commit a6e47e0), with two changes: Bhai now reads your real NURA data to suggest a next step, and the Home screen was rebuilt on 25 Sep 2026 (Sunnah, Duniya, AI Chat and More are unchanged). It keeps its own data on this device, separate from the current NURA app.</p>
+      <p class="muted-line">NURA — Pre-20 September baseline, restored from the project as it stood on 19 Sep 2026 (commit a6e47e0) and then rebuilt in stages: Home became Today, a Daily Flow + Life Grid, and (Sprint 1) a decision engine that suggests one realistic next action from your day, Salah and personal pace. Everything stays on this device, separate from the current NURA app. Navigation is Today, Hamdard, Progress, Plan; Quran &amp; Sunnah, Duniya tools and settings are reached from the profile button on Today.</p>
     </section>
   </main>
 
@@ -608,27 +591,27 @@
     <section class="card" id="memory-content"></section>
   </main>
 
-  <!-- BOTTOM NAV -->
-  <nav class="bottom-nav">
-    <button class="nav-btn active" data-nav="home" aria-label="Home">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3z"/></svg>
-      <span>Home</span>
+  <!-- NEW VIEWS (Sprint 1): Progress and Plan. Contents are rendered by js/features/*.js -->
+  <main class="view hidden" id="view-progress" data-view="progress"><div id="progress-root"></div></main>
+  <main class="view hidden" id="view-plan" data-view="plan"><div id="plan-root"></div></main>
+
+  <!-- BOTTOM NAV: Today, Hamdard, Progress, Plan (labels come from the localisation table) -->
+  <nav class="bottom-nav" aria-label="Primary">
+    <button class="nav-btn active" data-nav="home" aria-label="Today" aria-current="page">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+      <span data-i18n="nav.today">Today</span>
     </button>
-    <button class="nav-btn" data-nav="sunnah" aria-label="Sunnah">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 4h14v16l-7-4-7 4z"/></svg>
-      <span>Sunnah</span>
+    <button class="nav-btn" data-nav="chat" aria-label="Hamdard">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 4h16v12H7l-3 3z"/></svg>
+      <span data-i18n="nav.hamdard">Hamdard</span>
     </button>
-    <button class="nav-btn" data-nav="chat" aria-label="AI Chat">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h16v12H7l-3 3z"/></svg>
-      <span>AI Chat</span>
+    <button class="nav-btn" data-nav="progress" aria-label="Progress">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <span data-i18n="nav.progress">Progress</span>
     </button>
-    <button class="nav-btn" data-nav="duniya" aria-label="Duniya">
-      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18a13 13 0 0 1 0-18z"/></svg>
-      <span>Duniya</span>
-    </button>
-    <button class="nav-btn" data-nav="more" aria-label="More">
-      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
-      <span>More</span>
+    <button class="nav-btn" data-nav="plan" aria-label="Plan">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+      <span data-i18n="nav.plan">Plan</span>
     </button>
   </nav>
 
@@ -700,9 +683,27 @@
 <!-- SIMPLE TOAST -->
 <div class="toast hidden" id="toast"></div>
 
+<!-- Sprint 1 core (pure, tested in lab.html) -> data layer -> features -> legacy app -->
+<script src="js/core/platform.js"></script>
+<script src="js/core/salah.js"></script>
+<script src="js/core/capacity.js"></script>
+<script src="js/core/interruption.js"></script>
+<script src="js/core/session.js"></script>
+<script src="js/core/guard.js"></script>
+<script src="js/core/i18n.js"></script>
+<script src="js/core/brain.js"></script>
+<script src="js/core/ai.js"></script>
+<script src="js/core/sources.js"></script>
+<script src="js/data/repo.js"></script>
 <script src="js/duas-data.js"></script>
 <script src="js/ruku-data.js"></script>
 <script src="js/quran-meta.js"></script>
 <script src="js/app.js"></script>
+<script src="js/features/ui.js"></script>
+<script src="js/features/bridge.js"></script>
+<script src="js/features/today.js"></script>
+<script src="js/features/plan.js"></script>
+<script src="js/features/progress.js"></script>
+<script src="js/features/boot.js"></script>
 </body>
 </html>

@@ -69,6 +69,16 @@
     }, 1800);
   }
 
+  // ---------- SPRINT 1: repository, feature flags, analytics ----------
+  // The Brain, Salah layer, capacity model etc. live in js/core/* (pure, tested in lab.html). Everything below
+  // only wires them to this app's storage. All Brain data is namespaced nc_br_* and goes through migrations.
+  var BR = window.NuraRepo.create(localStorage, { env: window.NuraPlatform.detectEnv(location.hostname).name });
+  BR.migrate();
+  var BR_FLAGS = window.NuraPlatform.makeFlags(BR.read("nc_br_flags", {}));
+  var BR_ANALYTICS = window.NuraPlatform.makeAnalytics({ read: function () { return BR.read("nc_br_events", []); }, write: function (l) { BR.write("nc_br_events", l); } }, function () { return new Date(); });
+  function track(name, meta) { try { BR_ANALYTICS.track(name, meta); } catch (e) { /* analytics must never break a feature */ } }
+  window.NuraI18n.setLang(BR.settings().lang || "en");
+
   var uidSeq = 0;
   function uid(prefix) {
     // the counter keeps ids unique even when several are made in the same millisecond
@@ -133,19 +143,63 @@
     return (t || "").split(" ")[0];
   }
 
+  // ---- Salah Trust Layer wiring ----
+  // Times are calculated ON THE DEVICE (js/core/salah.js) whenever coordinates are known: deterministic, offline,
+  // and explainable. Aladhan is only used once to turn a typed city into coordinates (and as a last-resort cache).
+  // Explicit settings: calculation method (above), Asr method + per-prayer offsets (nc_br_settings.salah).
+  function salahLocation(s) {
+    s = s || getPrayerSettings();
+    if (!s) return null;
+    if (s.mode === "auto" && isFinite(s.lat) && isFinite(s.lon)) return { lat: s.lat, lon: s.lon, src: "gps" };
+    var r = readJSON("nc_br_location", null);
+    if (s.mode === "manual" && r && r.sig === s.city + "," + s.country && isFinite(r.lat)) return { lat: r.lat, lon: r.lon, src: "city", tz: r.tz };
+    return null;
+  }
+  function pick5(map) { var o = {}; PRAYER_ORDER.forEach(function (n) { o[n] = map[n]; }); return o; }
+  function minToHHMM(m) { return window.NuraSalah.hhmm(m); }
+  // UTC offset (minutes) of an IANA zone on a date; null when the zone can't be resolved on this device.
+  function ianaOffsetMin(tz, dateKey) {
+    try {
+      var parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" }).formatToParts(new Date(dateKey + "T12:00:00Z"));
+      var name = parts.filter(function (p) { return p.type === "timeZoneName"; })[0].value, m = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(name);
+      return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0)) : 0;
+    } catch (e) { return null; }
+  }
+  // -> {hhmm, minutes, source:'device'|'cache', result, loc, tzOffsetMin} or null when no times can be known
+  function salahTimingsFor(dateKey) {
+    var s = getPrayerSettings();
+    if (!s) return null;
+    var bs = BR.settings().salah, loc = salahLocation(s);
+    var d = dateKey.split("-"), tz = -new Date(Number(d[0]), Number(d[1]) - 1, Number(d[2]), 12).getTimezoneOffset();
+    if (loc) {
+      var r = window.NuraSalah.compute({ dateKey: dateKey, lat: loc.lat, lon: loc.lon, tzOffsetMin: tz, method: s.method || 1, asr: bs.asr, offsets: bs.offsets });
+      if (r.ok) return { hhmm: pick5(r.hhmm), minutes: pick5(r.times), source: "device", result: r, loc: loc, tzOffsetMin: tz, locTzOffsetMin: loc.tz ? ianaOffsetMin(loc.tz, dateKey) : null };
+    }
+    var c = readJSON("nc_prayer_times_cache", null);
+    if (c && c.date === dateKey && c.timings) {
+      var mins = {}, hh = {};
+      PRAYER_ORDER.forEach(function (n) { var m = window.NuraSalah.fromHHMM(c.timings[n]); if (m !== null) { m += Number(bs.offsets[n]) || 0; mins[n] = m; hh[n] = minToHHMM(m); } });
+      return { hhmm: hh, minutes: mins, source: "cache", result: null, loc: loc, tzOffsetMin: tz };
+    }
+    return null;
+  }
+
   function fetchPrayerTimesForToday(forceRefresh) {
     var settings = getPrayerSettings();
     if (!settings) return Promise.reject(new Error("no prayer settings"));
+    var local = salahTimingsFor(todayKey());
+    if (local && local.source === "device") return Promise.resolve(local.hhmm); // calculated here: no network, nothing to fetch
     var sig = settings.mode === "auto"
       ? (settings.lat.toFixed(2) + "," + settings.lon.toFixed(2) + ",m" + settings.method)
       : (settings.city + "," + settings.country + ",m" + settings.method);
     var cache = readJSON("nc_prayer_times_cache", null);
     if (!forceRefresh && cache && cache.date === todayKey() && cache.signature === sig) {
-      return Promise.resolve(cache.timings);
+      return Promise.resolve(local ? local.hhmm : cache.timings);
     }
+    var school = BR.settings().salah.asr === "hanafi" ? "&school=1" : "";
     var url = settings.mode === "auto"
-      ? "https://api.aladhan.com/v1/timings?latitude=" + settings.lat + "&longitude=" + settings.lon + "&method=" + settings.method
-      : "https://api.aladhan.com/v1/timingsByCity?city=" + encodeURIComponent(settings.city) + "&country=" + encodeURIComponent(settings.country) + "&method=" + settings.method;
+      ? "https://api.aladhan.com/v1/timings?latitude=" + settings.lat + "&longitude=" + settings.lon + "&method=" + settings.method + school
+      : "https://api.aladhan.com/v1/timingsByCity?city=" + encodeURIComponent(settings.city) + "&country=" + encodeURIComponent(settings.country) + "&method=" + settings.method + school;
     return fetch(url).then(function (res) {
       if (!res.ok) throw new Error("prayer times fetch failed");
       return res.json();
@@ -156,7 +210,13 @@
         Maghrib: cleanTimeStr(t.Maghrib), Isha: cleanTimeStr(t.Isha)
       };
       writeJSON("nc_prayer_times_cache", { date: todayKey(), signature: sig, timings: timings });
-      return timings;
+      var meta = data.data.meta;
+      if (settings.mode === "manual" && meta && isFinite(meta.latitude) && isFinite(meta.longitude)) {
+        // remember where the city is: from now on times are calculated on this device, with or without internet
+        writeJSON("nc_br_location", { sig: sig.split(",m")[0], lat: Number(meta.latitude), lon: Number(meta.longitude), tz: meta.timezone || null });
+      }
+      var after = salahTimingsFor(todayKey());
+      return after ? after.hhmm : timings;
     });
   }
 
@@ -937,8 +997,8 @@
   }
   function homeTimings() {
     if (!getPrayerSettings()) return null;
-    var c = readJSON("nc_prayer_times_cache", null);
-    return c && c.date === todayKey() && c.timings ? c.timings : null;
+    var t = salahTimingsFor(todayKey()); // device calculation first; cached online times only as a fallback
+    return t ? t.hhmm : null;
   }
   function homeGreetingWord() {
     var h = new Date().getHours();
@@ -1369,18 +1429,14 @@
     renderHomeProgress();
   }
 
+  // The Home screen is now TODAY (js/features/today.js). renderHome() keeps its name because dozens of older
+  // flows call it after saving something; it re-renders Today and, only if the old priority card is currently
+  // mounted in a Duniya tool screen, refreshes that card too.
   function renderHome() {
     ensureJourneyStarted();
-    var now = new Date();
-    document.getElementById("home-date").textContent = now.toLocaleDateString(undefined, { weekday: "long" }) + " · " + now.toLocaleDateString(undefined, { day: "numeric", month: "long" });
-    var name = localStorage.getItem("nc_user_name");
-    document.getElementById("home-greeting").textContent = name ? ("Assalamu Alaikum, " + name) : "Assalamu Alaikum";
-    document.getElementById("avatar-initial").textContent = name ? name.charAt(0).toUpperCase() : "N";
-    document.getElementById("home-context").textContent = homeGreetingWord();
-    document.getElementById("journey-badge-text").textContent = "DAY " + getJourneyDay();
-
-    renderTodaysPriority();
-    renderHomeHero();
+    if (window.NuraFeatures) window.NuraFeatures.render("today");
+    var tool = document.getElementById("view-duniya-tool");
+    if (tool && !tool.classList.contains("hidden")) renderTodaysPriority();
   }
 
   // ---------- FITNESS VIEW ----------
@@ -3779,9 +3835,9 @@
     salah: function () {
       var comps = getSalahCompletions();
       var out = { done: PRAYER_ORDER.filter(function (n) { return comps[n]; }), timesKnown: false };
-      var cache = readJSON("nc_prayer_times_cache", null);
-      if (cache && cache.date === todayKey() && cache.timings) {
-        var T = cache.timings, now = new Date();
+      var T = homeTimings();
+      if (T) {
+        var now = new Date();
         out.timesKnown = true;
         var np = getNextPrayer(T);
         out.next = { name: np.name, at: ncFmtTime(np.time), inMinutes: ncMinutesUntil(np.time), tomorrow: !!np.tomorrow };
@@ -4057,7 +4113,7 @@
       else if (sl.lastLogged) lines.push("Your last sleep entry was on " + sl.lastLogged.date + " (" + sl.lastLogged.status + ").");
       else lines.push("You haven't logged sleep with NURA yet, so I can't say how it's been going.");
       if (s.next && s.next.tomorrow) {
-        var fajr = new Date(); var parts = readJSON("nc_prayer_times_cache", {}).timings.Fajr.split(":");
+        var fajr = new Date(); var parts = (homeTimings() || { Fajr: "05:00" }).Fajr.split(":");
         fajr.setDate(fajr.getDate() + 1); fajr.setHours(Number(parts[0]), Number(parts[1]), 0, 0);
         var bed = new Date(fajr.getTime() - 7.5 * 3600000);
         lines.push("Fajr is at " + s.next.at + ". For about 7½ hours of sleep before it, aim to be asleep by " + ncFmtTime(bed) + ".");
@@ -4322,7 +4378,7 @@
     { name: "Sunnah routine + Akhlaq tracking", status: "implemented" },
     { name: "Quran daily verse (Tanzil, Arabic only)", status: "implemented" },
     { name: "Hadith lesson + quiz (1 lesson)", status: "partial" },
-    { name: "AI Chat (Bhai)", status: "partial", note: "rule-based, reads your real NURA data on this device; not a live AI model" },
+    { name: "Hamdard chat", status: "partial", note: "rule-based, reads your real NURA data on this device; not a live AI model" },
     { name: "Shield pause", status: "partial", note: "manual in-app only, no device-level blocking" },
     { name: "Vault / Hamdard", status: "planned", note: "no real encryption yet" },
     { name: "Duas library", status: "planned", note: "no reviewed source yet" },
@@ -4403,12 +4459,17 @@
     document.querySelectorAll(".view").forEach(function (v) {
       v.classList.toggle("hidden", v.dataset.view !== name);
     });
-    document.documentElement.classList.toggle("on-home", name === "home" || name === "flow");
-    var navHighlight = name.indexOf("duniya") === 0 ? "duniya" : name === "memory" ? "more" : name === "flow" ? "home" : name;
+    document.documentElement.classList.toggle("on-home", name === "home" || name === "flow" || name === "plan" || name === "progress");
+    // Four primary tabs: Today, Hamdard, Progress, Plan. Everything else is a supporting screen (nothing highlighted).
+    var navHighlight = name === "chat" ? "chat" : name === "progress" ? "progress" : (name === "plan" || name === "duniya-plan") ? "plan" : (name === "home" || name === "flow") ? "home" : null;
     document.querySelectorAll(".nav-btn[data-nav]").forEach(function (btn) {
-      btn.classList.toggle("active", btn.dataset.nav === navHighlight);
+      var on = btn.dataset.nav === navHighlight;
+      btn.classList.toggle("active", on);
+      if (on) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     });
-    if (name === "home") { mountPriorityCard("priority-card-home-slot"); renderHome(); }
+    if (name === "home") renderHome();
+    if (name === "plan" && window.NuraFeatures) window.NuraFeatures.render("plan");
+    if (name === "progress" && window.NuraFeatures) window.NuraFeatures.render("progress");
     if (name === "flow") { renderFlow(); window.scrollTo(0, 0); }
     if (name === "duniya-tool") { mountPriorityCard("priority-card-duniya-slot"); renderTodaysPriority(); }
     if (name === "sunnah") { renderRoutine(); renderAkhlaq(); renderVerseOfDay(); renderHadithList(); renderDuaCategories(); }
@@ -4436,9 +4497,6 @@
       btn.addEventListener("click", function () {
         setActiveView(btn.dataset.nav);
       });
-    });
-    document.getElementById("open-more-from-home").addEventListener("click", function () {
-      setActiveView("more");
     });
   }
 
@@ -4752,7 +4810,7 @@
         });
         var chatBtn = document.createElement("button");
         chatBtn.className = "btn btn-outline btn-full";
-        chatBtn.textContent = "Talk to Bhai (AI Chat)";
+        chatBtn.textContent = "Talk to Hamdard";
         chatBtn.addEventListener("click", function () { setActiveView("chat"); });
         area.appendChild(chatBtn);
         card.classList.remove("hidden");
@@ -11221,9 +11279,7 @@
     var v = document.getElementById("view-flow");
     if (v && !v.classList.contains("hidden")) renderFlow();
     // the priority card and Home's progress both read the same Flow, so they refresh together
-    if (document.getElementById("priority-card-el")) renderTodaysPriority();
-    else if (document.getElementById("home-progress")) renderHomeProgress();
-    refreshHomeCompanion();
+    if (window.NuraFeatures) window.NuraFeatures.render("today");
   }
 
   // ---- TODAY ----
@@ -11888,6 +11944,48 @@
     document.getElementById("modal-flow").addEventListener("click", function (e) { if (e.target === this) closeFlowSheet(); });
   }
 
+  // ---------- SPRINT 1 BRIDGE ----------
+  // The one controlled doorway between this legacy file and the new feature layer (js/features/*). Feature code
+  // can only use what is listed here; it never reaches into app internals directly.
+  function salahSet(name, on) {
+    var all = readJSON("nc_salah_completions", {}), d = todayKey();
+    all[d] = all[d] || {};
+    if (on) all[d][name] = true; else delete all[d][name];
+    writeJSON("nc_salah_completions", all);
+  }
+  window.NuraApp = {
+    hEl: hEl, showToast: showToast, todayKey: todayKey, readJSON: readJSON, writeJSON: writeJSON, uid: uid,
+    repo: BR, flags: BR_FLAGS, track: track,
+    setActiveView: setActiveView, renderHome: renderHome, openFlow: openFlow,
+    userName: function () { return localStorage.getItem("nc_user_name"); },
+    journeyDay: function () { ensureJourneyStarted(); return getJourneyDay(); },
+    salah: {
+      order: PRAYER_ORDER, methods: PRAYER_METHODS,
+      hasSettings: function () { return !!getPrayerSettings(); },
+      settings: getPrayerSettings, save: savePrayerSettings,
+      timings: function () { return salahTimingsFor(todayKey()); },
+      timingsFor: salahTimingsFor,
+      location: function () { return salahLocation(); },
+      ensure: function () { return fetchPrayerTimesForToday(); },
+      prayed: getSalahCompletions, setPrayed: salahSet,
+      paintSetup: paintHeroSetup,
+      requestGPS: requestLocationForPrayerTimes
+    },
+    plan: {
+      activities: getPlanActivities, saveActivities: savePlanActivities, settings: getPlanSettings,
+      built: getPlanBuilt, saveBuilt: savePlanBuilt, compute: computePlanSchedule,
+      toMin: planTimeToMinutes, toClock: planMinutesToClock
+    },
+    mem: {
+      suggestionsFor: memSuggestionsFor, correct: memCorrect, observe: memObserve, key: memKey, log: memLog,
+      addException: memAddException, daysLabel: memDaysLabel, parseCorrection: memParseCorrection, applyCorrection: memApplyCorrection
+    },
+    flow: {
+      day: flowDay, toggle: flowToggle, timeFor: flowTimeFor, applies: flowApplies, actions: flowActions,
+      long: fdLong, add: flowAdd
+    }
+  };
+
   // ---------- INIT ----------
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -11915,6 +12013,7 @@
     try { memRun(); } catch (e) {}
     initDuniyaGrowth();
     initDuniyaPlan();
+    if (window.NuraFeatures) window.NuraFeatures.init();
     renderHome();
     renderMore();
   });
